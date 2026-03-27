@@ -3,14 +3,19 @@ set -euo pipefail
 
 # LoRA finetune entrypoint for: liuhaotian/llava-v1.5-7b
 # Load hyperparameters from a config file so it can be reused.
-# Override config path by:
+#
+# Override config:
 #   CONFIG_FILE=/path/to/your_config.sh bash scripts/finetune_lora_llava_v1_5_7b_mydata.sh
+#
+# Without flash-attn (no nvcc / CUDA_HOME): use standard attention + train.py
+#   TRAIN_ENTRY=llava/train/train.py bash scripts/finetune_lora_llava_v1_5_7b_mydata.sh
 
 CONFIG_FILE="${CONFIG_FILE:-./scripts/configs/finetune_lora_small_vqa_2399.sh}"
 if [[ ! -f "${CONFIG_FILE}" ]]; then
   echo "Error: CONFIG_FILE not found: ${CONFIG_FILE}"
   exit 1
 fi
+# shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
 NUM_GPUS="${NUM_GPUS:-8}"
@@ -49,6 +54,8 @@ LORA_R="${LORA_R:-128}"
 LORA_ALPHA="${LORA_ALPHA:-256}"
 MM_PROJECTOR_LR="${MM_PROJECTOR_LR:-2e-5}"
 
+TRAIN_ENTRY="${TRAIN_ENTRY:-llava/train/train_mem.py}"
+
 if [[ -z "${DATA_PATH:-}" ]]; then
   echo "Error: DATA_PATH is required in config file: ${CONFIG_FILE}"
   exit 1
@@ -63,8 +70,21 @@ echo "DATA_PATH: ${DATA_PATH}"
 echo "IMAGE_FOLDER: ${IMAGE_FOLDER}"
 echo "OUTPUT_DIR: ${OUTPUT_DIR}"
 echo "NUM_GPUS: ${NUM_GPUS}"
+echo "TRAIN_ENTRY: ${TRAIN_ENTRY}"
 
-deepspeed --num_gpus "${NUM_GPUS}" llava/train/train_mem.py \
+PYTHON="${PYTHON:-python3}"
+if [[ -n "${DEEPSPEED_LAUNCHER:-}" ]]; then
+  read -r -a DEEPSPEED_CMD <<< "${DEEPSPEED_LAUNCHER}"
+else
+  if command -v deepspeed >/dev/null 2>&1; then
+    DEEPSPEED_CMD=(deepspeed)
+  else
+    DEEPSPEED_CMD=("${PYTHON}" -m deepspeed)
+  fi
+fi
+echo "DeepSpeed launcher: ${DEEPSPEED_CMD[*]}"
+
+"${DEEPSPEED_CMD[@]}" --num_gpus "${NUM_GPUS}" "${TRAIN_ENTRY}" \
   --deepspeed "${DEEPSPEED_CONFIG}" \
   --lora_enable "${LORA_ENABLE}" --lora_r "${LORA_R}" --lora_alpha "${LORA_ALPHA}" --mm_projector_lr "${MM_PROJECTOR_LR}" \
   --model_name_or_path "${MODEL_NAME_OR_PATH}" \
@@ -98,4 +118,3 @@ deepspeed --num_gpus "${NUM_GPUS}" llava/train/train_mem.py \
   --gradient_checkpointing "${GRADIENT_CHECKPOINTING}" \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS}" \
   --lazy_preprocess "${LAZY_PREPROCESS}"
-
