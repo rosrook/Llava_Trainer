@@ -2,6 +2,9 @@
 set -euo pipefail
 
 # Launcher for finetuning script.
+# Uses train_mem.py + flash-attn by default (see CONFIG_FILE). Fallback:
+#   TRAIN_ENTRY=llava/train/train.py bash scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
+#
 # Usage examples:
 #   CUDA_VISIBLE_DEVICES=0 bash scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
 #   CUDA_VISIBLE_DEVICES=0,1 bash scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh

@@ -3,9 +3,11 @@
 # This file is sourced by:
 #   scripts/finetune_lora_llava_v1_5_7b_mydata.sh
 #
-# If flash-attn cannot be installed (no nvcc/CUDA_HOME), train without it:
-#   export TRAIN_ENTRY=llava/train/train.py
-#   bash scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
+# Training entry: train_mem.py uses FlashAttention2 (requires flash_attn). Override if needed:
+#   TRAIN_ENTRY=llava/train/train.py
+
+# Training script (default: FlashAttention)
+TRAIN_ENTRY=llava/train/train_mem.py
 
 # Required data paths
 DATA_PATH="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/first_data4llava7B/vqa_data.json"

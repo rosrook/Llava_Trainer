@@ -7,7 +7,7 @@ set -euo pipefail
 # Override config:
 #   CONFIG_FILE=/path/to/your_config.sh bash scripts/finetune_lora_llava_v1_5_7b_mydata.sh
 #
-# Without flash-attn (no nvcc / CUDA_HOME): use standard attention + train.py
+# Default entry is train_mem.py (FlashAttention2). Fallback without flash-attn:
 #   TRAIN_ENTRY=llava/train/train.py bash scripts/finetune_lora_llava_v1_5_7b_mydata.sh
 
 CONFIG_FILE="${CONFIG_FILE:-./scripts/configs/finetune_lora_small_vqa_2399.sh}"
