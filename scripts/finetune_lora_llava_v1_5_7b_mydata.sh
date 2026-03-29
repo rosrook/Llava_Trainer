@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Always run from LLaVA repo root so ./scripts/... paths resolve (DeepSpeed config must exist on disk).
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
 # LoRA finetune entrypoint for: liuhaotian/llava-v1.5-7b
 # Load hyperparameters from a config file so it can be reused.
 #
@@ -20,6 +24,19 @@ source "${CONFIG_FILE}"
 
 NUM_GPUS="${NUM_GPUS:-8}"
 DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-./scripts/zero3.json}"
+if [[ ! -f "${DEEPSPEED_CONFIG}" ]]; then
+  echo "Warning: DeepSpeed config not found: ${DEEPSPEED_CONFIG}"
+  echo "         (If you see base64 decode errors, the path was wrong or the file is missing.)"
+  echo "         Falling back to: ./scripts/zero3.json"
+  DEEPSPEED_CONFIG="./scripts/zero3.json"
+fi
+if [[ ! -f "${DEEPSPEED_CONFIG}" ]]; then
+  echo "Error: DeepSpeed config missing: ${DEEPSPEED_CONFIG}"
+  exit 1
+fi
+if command -v realpath >/dev/null 2>&1; then
+  DEEPSPEED_CONFIG="$(realpath "${DEEPSPEED_CONFIG}")"
+fi
 MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-liuhaotian/llava-v1.5-7b}"
 PROMPT_VERSION="${PROMPT_VERSION:-v1}"
 VISION_TOWER="${VISION_TOWER:-openai/clip-vit-large-patch14-336}"
@@ -79,6 +96,8 @@ if [[ -z "${IMAGE_FOLDER:-}" ]]; then
 fi
 
 echo "Using config: ${CONFIG_FILE}"
+echo "ROOT_DIR: ${ROOT_DIR}"
+echo "DEEPSPEED_CONFIG: ${DEEPSPEED_CONFIG}"
 echo "DATA_PATH: ${DATA_PATH}"
 echo "IMAGE_FOLDER: ${IMAGE_FOLDER}"
 echo "OUTPUT_DIR: ${OUTPUT_DIR}"

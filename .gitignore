@@ -10,6 +10,12 @@ dist
 *.json
 *.jsonl
 
+# DeepSpeed / launcher JSON under scripts/ must be tracked (global *.json above ignores them)
+!**/scripts/zero2.json
+!**/scripts/zero3.json
+!**/scripts/zero3_offload.json
+!**/scripts/zero3_logging.json
+
 # Data
 !**/alpaca-data-conversation.json
 

@@ -1,0 +1,25 @@
+# accelerate stays at 0.21.0 (LLaVA default). Newer unpinned peft imports
+# accelerate.utils.memory.clear_device_cache which does not exist in accelerate 0.21.
+#
+# After each change, reinstall and smoke-test:
+#   cd /path/to/LLaVA
+#   pip install "accelerate==0.21.0" "peft==<VERSION>" --force-reinstall
+#   python3 -c "from transformers import Trainer; from peft import PeftModel; print('ok')"
+#
+# Suggested order (edit pyproject.toml peft== line to match, or use pip line only):
+
+# Trial 1 (default in pyproject.toml)
+peft==0.7.1
+
+# Trial 2
+peft==0.6.2
+
+# Trial 3
+peft==0.8.2
+
+# Trial 4
+peft==0.9.0
+
+# If all fail with transformers 4.37.2, either:
+#   (A) Upgrade stack: accelerate>=0.32 + peft>=0.10 (see pyproject git history), or
+#   (B) Ask in LLaVA issues for a tested triple (torch / transformers / peft / accelerate).
