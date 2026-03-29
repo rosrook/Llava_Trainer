@@ -7,6 +7,10 @@
 # Example:
 #   export LORA_PATH=/path/to/checkpoints/llava-v1.5-7b-mydata-lora-small2399
 #   bash scripts/eval_mmbench_v15_7b_lora.sh
+#
+# Multi-GPU: same as base — default chunk count from `nvidia-smi -L` (e.g. 8 cards → 8 workers).
+#   export LORA_PATH=... && bash scripts/eval_mmbench_v15_7b_lora.sh
+# Force one GPU: MMBENCH_NUM_CHUNKS=1
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,14 +38,10 @@ fi
 
 mkdir -p "${ANS_DIR}" "${UPLOAD_DIR}"
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python -m llava.eval.model_vqa_mmbench \
-  --model-path "${LORA_PATH}" \
-  --model-base liuhaotian/llava-v1.5-7b \
-  --question-file "${QUESTION}" \
-  --answers-file "${ANS_FILE}" \
-  --single-pred-prompt \
-  --temperature 0 \
-  --conv-mode vicuna_v1
+# shellcheck source=scripts/eval_mmbench_v15_7b_multigpu.sh
+source "${ROOT}/scripts/eval_mmbench_v15_7b_multigpu.sh"
+MMBENCH_VQA_EXTRA_ARGS=( --model-path "${LORA_PATH}" --model-base liuhaotian/llava-v1.5-7b )
+eval_mmbench_v15_run_inference
 
 python "${ROOT}/scripts/convert_mmbench_for_submission.py" \
   --annotation-file "${QUESTION}" \

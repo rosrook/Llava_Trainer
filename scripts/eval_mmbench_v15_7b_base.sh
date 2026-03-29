@@ -8,6 +8,10 @@
 #   3) pip install openpyxl pandas  (for convert step)
 #
 # Official eval uses greedy decoding (--temperature 0), same as README Evaluation section.
+#
+# Multi-GPU: one process per GPU, data split via model_vqa_mmbench --num-chunks/--chunk-idx.
+# Default chunk count = number of GPUs (`nvidia-smi -L`). Override: MMBENCH_NUM_CHUNKS=1 (single)
+# or MMBENCH_NUM_CHUNKS=4. Optional MMBENCH_GPU_LIST=0,1,2,3 (physical ids, length >= chunks).
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,13 +32,10 @@ fi
 
 mkdir -p "${ANS_DIR}" "${UPLOAD_DIR}"
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python -m llava.eval.model_vqa_mmbench \
-  --model-path liuhaotian/llava-v1.5-7b \
-  --question-file "${QUESTION}" \
-  --answers-file "${ANS_FILE}" \
-  --single-pred-prompt \
-  --temperature 0 \
-  --conv-mode vicuna_v1
+# shellcheck source=scripts/eval_mmbench_v15_7b_multigpu.sh
+source "${ROOT}/scripts/eval_mmbench_v15_7b_multigpu.sh"
+MMBENCH_VQA_EXTRA_ARGS=( --model-path liuhaotian/llava-v1.5-7b )
+eval_mmbench_v15_run_inference
 
 python "${ROOT}/scripts/convert_mmbench_for_submission.py" \
   --annotation-file "${QUESTION}" \
