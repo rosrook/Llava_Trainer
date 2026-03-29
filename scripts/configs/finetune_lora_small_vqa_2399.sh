@@ -11,11 +11,12 @@ TRAIN_ENTRY=llava/train/train_mem.py
 
 # Required data paths
 DATA_PATH="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/first_data4llava7B/vqa_data.json"
-IMAGE_FOLDER="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/first_data4llava7B/images"
+IMAGE_FOLDER="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/first_data4llava7B"
 
 # Hardware / runtime
 NUM_GPUS=8
-DEEPSPEED_CONFIG="./scripts/zero3.json"
+# ZeRO-3 + more frequent DeepSpeed console timing (loss / wall clock)
+DEEPSPEED_CONFIG="./scripts/zero3_logging.json"
 
 # Model setup
 MODEL_NAME_OR_PATH="liuhaotian/llava-v1.5-7b"
@@ -36,7 +37,19 @@ LORA_ALPHA=256
 MM_PROJECTOR_LR=2e-5
 
 # Output
-OUTPUT_DIR="./checkpoints/llava-v1.5-7b-mydata-lora-small2399"
+OUTPUT_DIR="/mnt/tidal-alsh01/dataset/perceptionVLM/models_zhuxuzhou/checkpoints/llava-v1.5-7b-mydata-lora-small2399"
+
+# Logging & experiment tracking (requires: pip install tensorboard; for wandb: pip install wandb && wandb login)
+# TensorBoard: tensorboard --logdir "${OUTPUT_DIR}/tb" --port 6006 --bind_all
+# W&B offline: export WANDB_MODE=offline
+REPORT_TO="tensorboard wandb"
+LOGGING_DIR="${OUTPUT_DIR}/tb"
+RUN_NAME="llava-v1.5-7b-lora-small2399"
+LOGGING_FIRST_STEP=True
+LOG_LEVEL=info
+LOGGING_NAN_INF_FILTER=True
+SEED=42
+SAVE_SAFETENSORS=True
 
 # Training hyperparameters for small data
 NUM_TRAIN_EPOCHS=3

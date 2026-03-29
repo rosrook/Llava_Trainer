@@ -54,6 +54,19 @@ LORA_R="${LORA_R:-128}"
 LORA_ALPHA="${LORA_ALPHA:-256}"
 MM_PROJECTOR_LR="${MM_PROJECTOR_LR:-2e-5}"
 
+# Observability (HuggingFace Trainer + optional W&B / TensorBoard)
+# REPORT_TO: space-separated list, e.g. "tensorboard" or "tensorboard wandb" or "none"
+REPORT_TO="${REPORT_TO:-tensorboard}"
+LOGGING_DIR="${LOGGING_DIR:-${OUTPUT_DIR}/tb}"
+LOGGING_FIRST_STEP="${LOGGING_FIRST_STEP:-True}"
+LOG_LEVEL="${LOG_LEVEL:-info}"
+LOGGING_NAN_INF_FILTER="${LOGGING_NAN_INF_FILTER:-True}"
+DISABLE_TQDM="${DISABLE_TQDM:-False}"
+SEED="${SEED:-42}"
+SAVE_SAFETENSORS="${SAVE_SAFETENSORS:-True}"
+# RUN_NAME: W&B / TB run name; leave empty for Trainer default
+RUN_NAME="${RUN_NAME:-}"
+
 TRAIN_ENTRY="${TRAIN_ENTRY:-llava/train/train_mem.py}"
 
 if [[ -z "${DATA_PATH:-}" ]]; then
@@ -69,8 +82,26 @@ echo "Using config: ${CONFIG_FILE}"
 echo "DATA_PATH: ${DATA_PATH}"
 echo "IMAGE_FOLDER: ${IMAGE_FOLDER}"
 echo "OUTPUT_DIR: ${OUTPUT_DIR}"
+echo "LOGGING_DIR: ${LOGGING_DIR}"
+echo "REPORT_TO: ${REPORT_TO}"
 echo "NUM_GPUS: ${NUM_GPUS}"
 echo "TRAIN_ENTRY: ${TRAIN_ENTRY}"
+
+read -r -a REPORT_ARR <<< "${REPORT_TO}"
+if [[ ${#REPORT_ARR[@]} -eq 0 ]]; then
+  REPORT_ARR=(tensorboard)
+fi
+RUN_NAME_ARGS=()
+if [[ -n "${RUN_NAME}" ]]; then
+  RUN_NAME_ARGS=(--run_name "${RUN_NAME}")
+fi
+
+mkdir -p "${LOGGING_DIR}"
+
+DISABLE_TQDM_ARGS=()
+if [[ "${DISABLE_TQDM}" == "True" ]]; then
+  DISABLE_TQDM_ARGS=(--disable_tqdm True)
+fi
 
 PYTHON="${PYTHON:-python3}"
 if [[ -n "${DEEPSPEED_LAUNCHER:-}" ]]; then
@@ -113,6 +144,15 @@ echo "DeepSpeed launcher: ${DEEPSPEED_CMD[*]}"
   --warmup_ratio "${WARMUP_RATIO}" \
   --lr_scheduler_type "${LR_SCHEDULER_TYPE}" \
   --logging_steps "${LOGGING_STEPS}" \
+  --report_to "${REPORT_ARR[@]}" \
+  --logging_dir "${LOGGING_DIR}" \
+  --logging_first_step "${LOGGING_FIRST_STEP}" \
+  --log_level "${LOG_LEVEL}" \
+  --logging_nan_inf_filter "${LOGGING_NAN_INF_FILTER}" \
+  "${DISABLE_TQDM_ARGS[@]}" \
+  --seed "${SEED}" \
+  "${RUN_NAME_ARGS[@]}" \
+  --save_safetensors "${SAVE_SAFETENSORS}" \
   --tf32 "${TF32}" \
   --model_max_length "${MODEL_MAX_LENGTH}" \
   --gradient_checkpointing "${GRADIENT_CHECKPOINTING}" \
