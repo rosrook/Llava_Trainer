@@ -1,31 +1,24 @@
 #!/usr/bin/env bash
-# MMBench (EN) — LoRA fine-tuned checkpoint (merge base + adapter at load time).
+# MMBench (EN) — original LLaVA-1.5-7B checkpoint (no LoRA).
 #
-# Prereq: same tsv as eval_mmbench_v15_7b_base.sh
+# Prereq:
+#   1) cd to LLaVA repo root
+#   2) Download tsv to: ./playground/data/eval/mmbench/mmbench_dev_20230712.tsv
+#      https://download.openmmlab.com/mmclassification/datasets/mmbench/mmbench_dev_20230712.tsv
+#   3) pip install openpyxl pandas  (for convert step)
 #
-# Set LORA_PATH to your training output_dir (the folder with adapter weights + config).
-# Example:
-#   export LORA_PATH=/path/to/checkpoints/llava-v1.5-7b-mydata-lora-small2399
-#   bash scripts/eval_mmbench_v15_7b_lora.sh
-#
-# Multi-GPU: same as base — default chunk count from `nvidia-smi -L` (e.g. 8 cards → 8 workers).
-#   export LORA_PATH=... && bash scripts/eval_mmbench_v15_7b_lora.sh
-# Force one GPU: MMBENCH_NUM_CHUNKS=1
+# Official eval uses greedy decoding (--temperature 0), same as README Evaluation section.
+# Multi-GPU: one process per GPU, data split via model_vqa_mmbench --num-chunks/--chunk-idx.
+# Default chunk count = number of GPUs (`nvidia-smi -L`). Override: MMBENCH_NUM_CHUNKS=1 (single)
+# or MMBENCH_NUM_CHUNKS=4. Optional MMBENCH_GPU_LIST=0,1,2,3 (physical ids, length >= chunks).
 
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
-
-LORA_PATH="${LORA_PATH:-}"
-if [[ -z "${LORA_PATH}" ]]; then
-  echo "Set LORA_PATH to your LoRA output directory, e.g.:"
-  echo "  export LORA_PATH=/mnt/.../checkpoints/llava-v1.5-7b-mydata-lora-small2399"
-  exit 1
-fi
 
 SPLIT="mmbench_dev_20230712"
 QUESTION="${ROOT}/playground/data/eval/mmbench/${SPLIT}.tsv"
-EXPERIMENT="llava-v1.5-7b-lora-mydata"
+EXPERIMENT="llava-v1.5-7b-base"
 ANS_DIR="${ROOT}/playground/data/eval/mmbench/answers/${SPLIT}"
 ANS_FILE="${ANS_DIR}/${EXPERIMENT}.jsonl"
 UPLOAD_DIR="${ROOT}/playground/data/eval/mmbench/answers_upload/${SPLIT}"
@@ -40,7 +33,7 @@ mkdir -p "${ANS_DIR}" "${UPLOAD_DIR}"
 
 # shellcheck source=scripts/eval_mmbench_v15_7b_multigpu.sh
 source "${ROOT}/scripts/eval_mmbench_v15_7b_multigpu.sh"
-MMBENCH_VQA_EXTRA_ARGS=( --model-path "${LORA_PATH}" --model-base liuhaotian/llava-v1.5-7b )
+MMBENCH_VQA_EXTRA_ARGS=( --model-path liuhaotian/llava-v1.5-7b )
 eval_mmbench_v15_run_inference
 
 python "${ROOT}/scripts/convert_mmbench_for_submission.py" \

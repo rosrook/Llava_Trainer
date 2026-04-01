@@ -3,14 +3,11 @@ set -euo pipefail
 
 # Launcher for finetuning (loads scripts/configs/finetune_lora_small_vqa_2399.sh by default).
 #
-# Uses train_mem.py + flash-attn when TRAIN_ENTRY is unchanged in config. Fallback:
-#   TRAIN_ENTRY=llava/train/train.py bash scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
-#
 # Usage:
-#   CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
-#   CONFIG_FILE=./scripts/configs/your_config.sh bash scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
+#   CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 bash scripts/common_scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
+#   CONFIG_FILE=./scripts/configs/your_config.sh bash scripts/common_scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
@@ -36,4 +33,4 @@ echo "GPUs:        ${CUDA_VISIBLE_DEVICES} (NUM_GPUS=${NUM_GPUS})"
 echo "Config:      ${CONFIG_FILE}"
 echo "WANDB:       disabled=${WANDB_DISABLED} project=${WANDB_PROJECT} mode=${WANDB_MODE}"
 
-bash scripts/finetune_lora_llava_v1_5_7b_mydata.sh 2>&1 | tee "${log_file}"
+bash "${ROOT_DIR}/scripts/finetune_lora_llava_v1_5_7b_mydata.sh" 2>&1 | tee "${log_file}"
