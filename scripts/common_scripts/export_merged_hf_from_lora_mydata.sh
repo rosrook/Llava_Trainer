@@ -10,7 +10,7 @@ ADAPTER_DIR="${ROOT_DIR}/checkpoints/llava-v1.5-7b-mydata-lora-small2399"
 # Base model (HF repo id or local path):
 BASE_MODEL="liuhaotian/llava-v1.5-7b"
 # Output: a standalone HuggingFace model directory loadable via from_pretrained().
-MERGED_DIR="${ROOT_DIR}/checkpoints/llava-v1.5-7b-mydata-lora-small2399-merged-hf"
+MERGED_DIR="/mnt/tidal-alsh01/dataset/perceptionVLM/models_zhuxuzhou/Llava-v1.5-7b_hf/llava-v1.5-7b-mydata-lora-small2399-merged-hf"
 
 echo "ROOT_DIR:    ${ROOT_DIR}"
 echo "ADAPTER_DIR: ${ADAPTER_DIR}"
