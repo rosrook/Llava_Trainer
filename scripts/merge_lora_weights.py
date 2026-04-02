@@ -6,8 +6,17 @@ from llava.mm_utils import get_model_name_from_path
 
 
 def merge_lora(args):
+    model_base = args.model_base
+    if model_base is not None and str(model_base).strip().lower() in {"", "none", "null"}:
+        model_base = None
+
     model_name = get_model_name_from_path(args.model_path)
-    tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, device_map='cpu')
+    tokenizer, model, image_processor, context_len = load_pretrained_model(
+        args.model_path,
+        model_base,
+        model_name,
+        device_map='cpu',
+    )
 
     os.makedirs(args.save_model_path, exist_ok=True)
 
@@ -22,7 +31,12 @@ def merge_lora(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, required=True)
-    parser.add_argument("--model-base", type=str, required=True)
+    parser.add_argument(
+        "--model-base",
+        type=str,
+        default=None,
+        help="Base model path/repo for LoRA adapters. Leave unset for already-merged/full models.",
+    )
     parser.add_argument("--save-model-path", type=str, required=True)
 
     args = parser.parse_args()
