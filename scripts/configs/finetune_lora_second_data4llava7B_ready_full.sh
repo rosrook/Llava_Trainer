@@ -31,7 +31,7 @@ LORA_R=128
 LORA_ALPHA=256
 MM_PROJECTOR_LR=2e-5
 
-OUTPUT_DIR="./checkpoints/lora_second_data4llava7B_ready_full"
+OUTPUT_DIR="/mnt/tidal-alsh01/dataset/perceptionVLM/models_zhuxuzhou/checkpoints/second_data4llava7B_ready_full"
 
 REPORT_TO="tensorboard wandb"
 LOGGING_DIR="${OUTPUT_DIR}/tb"
