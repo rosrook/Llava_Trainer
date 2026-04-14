@@ -9,6 +9,10 @@ timestamp_now() {
   date +"%Y%m%d_%H%M%S"
 }
 
+has_rg() {
+  command -v rg >/dev/null 2>&1
+}
+
 infer_visible_gpu_count() {
   local cvd="${CUDA_VISIBLE_DEVICES:-}"
   if [[ -z "${cvd}" ]]; then
@@ -112,6 +116,8 @@ RUN_NAME="${RUN_NAME:-}"
 TRAIN_ENTRY="${TRAIN_ENTRY:-llava/train/train_mem.py}"
 DIAG_DIR="${DIAG_DIR:-${OUTPUT_DIR}/diagnostics}"
 DATASET_QUICK_CHECK_LIMIT="${DATASET_QUICK_CHECK_LIMIT:-256}"
+SAMPLE_TRACE_OUTPUT="${SAMPLE_TRACE_OUTPUT:-}"
+SAMPLE_TRACE_FLUSH_STEPS="${SAMPLE_TRACE_FLUSH_STEPS:-1}"
 
 if [[ -z "${DATA_PATH:-}" ]]; then
   echo "Error: DATA_PATH is required in config file: ${CONFIG_FILE}"
@@ -151,6 +157,7 @@ echo "REPORT_TO: ${REPORT_TO}"
 echo "NUM_GPUS: ${NUM_GPUS}"
 echo "TRAIN_ENTRY: ${TRAIN_ENTRY}"
 echo "DIAG_DIR: ${DIAG_DIR}"
+echo "SAMPLE_TRACE_OUTPUT: ${SAMPLE_TRACE_OUTPUT:-<disabled>}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "MASTER_PORT: ${MASTER_PORT:-<unset>}"
 
@@ -228,7 +235,11 @@ collect_failure_diagnostics() {
     echo "master_port=${MASTER_PORT:-<unset>}"
     echo
     echo "==== Environment (filtered) ===="
-    env | rg -N "^(CUDA|NCCL|MASTER|WORLD|RANK|LOCAL_RANK|OMP|PYTORCH|TORCH|WANDB|CONFIG_FILE|NUM_GPUS|DATA_PATH|IMAGE_FOLDER|OUTPUT_DIR)=" || true
+    if has_rg; then
+      env | rg -N "^(CUDA|NCCL|MASTER|WORLD|RANK|LOCAL_RANK|OMP|PYTORCH|TORCH|WANDB|CONFIG_FILE|NUM_GPUS|DATA_PATH|IMAGE_FOLDER|OUTPUT_DIR)=" || true
+    else
+      env | grep -E "^(CUDA|NCCL|MASTER|WORLD|RANK|LOCAL_RANK|OMP|PYTORCH|TORCH|WANDB|CONFIG_FILE|NUM_GPUS|DATA_PATH|IMAGE_FOLDER|OUTPUT_DIR)=" || true
+    fi
     echo
     echo "==== nvidia-smi ===="
     nvidia-smi || true
@@ -237,7 +248,11 @@ collect_failure_diagnostics() {
     nvidia-smi topo -m || true
     echo
     echo "==== dmesg tail (NVRM/Xid/OOM) ===="
-    dmesg | rg -i "NVRM|Xid|oom|out of memory" | tail -n 200 || true
+    if has_rg; then
+      dmesg | rg -i "NVRM|Xid|oom|out of memory" | tail -n 200 || true
+    else
+      dmesg | grep -Ei "NVRM|Xid|oom|out of memory" | tail -n 200 || true
+    fi
     echo
     echo "==== output directory listing ===="
     ls -lah "${OUTPUT_DIR}" || true
@@ -251,6 +266,13 @@ collect_failure_diagnostics() {
 DISABLE_TQDM_ARGS=()
 if [[ "${DISABLE_TQDM}" == "True" ]]; then
   DISABLE_TQDM_ARGS=(--disable_tqdm True)
+fi
+SAMPLE_TRACE_ARGS=()
+if [[ -n "${SAMPLE_TRACE_OUTPUT}" ]]; then
+  SAMPLE_TRACE_ARGS=(
+    --sample_trace_output "${SAMPLE_TRACE_OUTPUT}"
+    --sample_trace_flush_steps "${SAMPLE_TRACE_FLUSH_STEPS}"
+  )
 fi
 
 PYTHON="${PYTHON:-python3}"
@@ -307,7 +329,8 @@ set +e
   --model_max_length "${MODEL_MAX_LENGTH}" \
   --gradient_checkpointing "${GRADIENT_CHECKPOINTING}" \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS}" \
-  --lazy_preprocess "${LAZY_PREPROCESS}"
+  --lazy_preprocess "${LAZY_PREPROCESS}" \
+  "${SAMPLE_TRACE_ARGS[@]}"
 exit_code=$?
 set -e
 if [[ "${exit_code}" -ne 0 ]]; then

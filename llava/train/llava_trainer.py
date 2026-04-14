@@ -1,4 +1,6 @@
 import os
+import json
+import time
 import torch
 import torch.nn as nn
 
@@ -131,6 +133,50 @@ class LengthGroupedSampler(Sampler):
 
 
 class LLaVATrainer(Trainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._sample_trace_fp = None
+        self._sample_trace_path = None
+
+    def _maybe_init_sample_trace_writer(self):
+        out = getattr(self.args, "sample_trace_output", None)
+        if not out or self._sample_trace_fp is not None:
+            return
+        base_path = os.path.abspath(os.path.expanduser(str(out)))
+        lr = int(getattr(self.args, "local_rank", -1))
+        if lr >= 0:
+            root, ext = os.path.splitext(base_path)
+            if not ext:
+                ext = ".jsonl"
+            path = f"{root}.rank{lr}{ext}"
+        else:
+            path = base_path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self._sample_trace_path = path
+        self._sample_trace_fp = open(path, "a", encoding="utf-8")
+
+    def _write_sample_trace(self, sample_trace):
+        if not sample_trace:
+            return
+        self._maybe_init_sample_trace_writer()
+        if self._sample_trace_fp is None:
+            return
+        row = {
+            "ts": time.time(),
+            "global_step": int(getattr(self.state, "global_step", 0)),
+            "local_rank": int(getattr(self.args, "local_rank", -1)),
+            "samples": sample_trace,
+        }
+        self._sample_trace_fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+        flush_every = max(1, int(getattr(self.args, "sample_trace_flush_steps", 1)))
+        if row["global_step"] % flush_every == 0:
+            self._sample_trace_fp.flush()
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        sample_trace = inputs.pop("_sample_trace", None)
+        self._write_sample_trace(sample_trace)
+        return super().compute_loss(model, inputs, return_outputs=return_outputs)
+
 
     def _get_train_sampler(self) -> Optional[torch.utils.data.Sampler]:
         if self.train_dataset is None or not has_length(self.train_dataset):
@@ -253,3 +299,12 @@ class LLaVATrainer(Trainer):
             pass
         else:
             super(LLaVATrainer, self)._save(output_dir, state_dict)
+
+    def __del__(self):
+        fp = getattr(self, "_sample_trace_fp", None)
+        if fp is not None:
+            try:
+                fp.flush()
+                fp.close()
+            except Exception:
+                pass

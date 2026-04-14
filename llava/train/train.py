@@ -110,6 +110,14 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_bias: str = "none"
     mm_projector_lr: Optional[float] = None
     group_by_modality_length: bool = field(default=False)
+    sample_trace_output: Optional[str] = field(
+        default=None,
+        metadata={"help": "Optional JSONL path to record per-batch sample trace for debugging."},
+    )
+    sample_trace_flush_steps: int = field(
+        default=1,
+        metadata={"help": "Flush frequency (in optimizer steps) for sample trace writes."},
+    )
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -736,6 +744,12 @@ class LazySupervisedDataset(Dataset):
             # image does not exist in the data, but the model is multimodal
             crop_size = self.data_args.image_processor.crop_size
             data_dict['image'] = torch.zeros(3, crop_size['height'], crop_size['width'])
+        sample_obj = self.list_data_dict[i]
+        data_dict["_sample_trace"] = {
+            "dataset_index": int(i),
+            "id": str(sample_obj.get("id", "")),
+            "image": str(sample_obj.get("image", "")),
+        }
         return data_dict
 
 
@@ -769,6 +783,9 @@ class DataCollatorForSupervisedDataset(object):
                 batch['images'] = torch.stack(images)
             else:
                 batch['images'] = images
+
+        if '_sample_trace' in instances[0]:
+            batch['_sample_trace'] = [instance['_sample_trace'] for instance in instances]
 
         return batch
 

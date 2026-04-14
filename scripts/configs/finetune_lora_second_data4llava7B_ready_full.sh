@@ -6,7 +6,7 @@
 #   CONFIG_FILE=./scripts/configs/finetune_lora_second_data4llava7B_ready_full.sh \
 #     bash scripts/common_scripts/run_finetune_lora_llava_v1_5_7b_mydata.sh
 
-TRAIN_ENTRY=llava/train/train_mem.py
+TRAIN_ENTRY="${TRAIN_ENTRY:-llava/train/train_mem.py}"
 
 DATA_PATH="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/second_data4llava7B_ready_full/vqa_data.json"
 IMAGE_FOLDER="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/second_data4llava7B_ready_full/images"
