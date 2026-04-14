@@ -118,6 +118,18 @@ class TrainingArguments(transformers.TrainingArguments):
         default=1,
         metadata={"help": "Flush frequency (in optimizer steps) for sample trace writes."},
     )
+    batch_debug_output: Optional[str] = field(
+        default=None,
+        metadata={"help": "Optional JSONL path to record per-step batch/memory diagnostics."},
+    )
+    batch_debug_every_steps: int = field(
+        default=1,
+        metadata={"help": "Write batch diagnostics every N optimizer steps."},
+    )
+    detect_nan_inf_loss: bool = field(
+        default=False,
+        metadata={"help": "Raise error when loss is NaN/Inf (also recorded in batch debug file)."},
+    )
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):

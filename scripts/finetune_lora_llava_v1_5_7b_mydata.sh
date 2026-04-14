@@ -13,6 +13,15 @@ has_rg() {
   command -v rg >/dev/null 2>&1
 }
 
+filter_lines() {
+  local pattern="$1"
+  if has_rg; then
+    rg -i "${pattern}" || true
+  else
+    grep -Ei "${pattern}" || true
+  fi
+}
+
 infer_visible_gpu_count() {
   local cvd="${CUDA_VISIBLE_DEVICES:-}"
   if [[ -z "${cvd}" ]]; then
@@ -118,6 +127,11 @@ DIAG_DIR="${DIAG_DIR:-${OUTPUT_DIR}/diagnostics}"
 DATASET_QUICK_CHECK_LIMIT="${DATASET_QUICK_CHECK_LIMIT:-256}"
 SAMPLE_TRACE_OUTPUT="${SAMPLE_TRACE_OUTPUT:-}"
 SAMPLE_TRACE_FLUSH_STEPS="${SAMPLE_TRACE_FLUSH_STEPS:-1}"
+BATCH_DEBUG_OUTPUT="${BATCH_DEBUG_OUTPUT:-}"
+BATCH_DEBUG_EVERY_STEPS="${BATCH_DEBUG_EVERY_STEPS:-1}"
+DETECT_NAN_INF_LOSS="${DETECT_NAN_INF_LOSS:-false}"
+FORENSICS_ENABLE="${FORENSICS_ENABLE:-1}"
+RUNTIME_LOG="${RUNTIME_LOG:-}"
 
 if [[ -z "${DATA_PATH:-}" ]]; then
   echo "Error: DATA_PATH is required in config file: ${CONFIG_FILE}"
@@ -158,10 +172,25 @@ echo "NUM_GPUS: ${NUM_GPUS}"
 echo "TRAIN_ENTRY: ${TRAIN_ENTRY}"
 echo "DIAG_DIR: ${DIAG_DIR}"
 echo "SAMPLE_TRACE_OUTPUT: ${SAMPLE_TRACE_OUTPUT:-<disabled>}"
+echo "BATCH_DEBUG_OUTPUT: ${BATCH_DEBUG_OUTPUT:-<disabled>}"
+echo "FORENSICS_ENABLE: ${FORENSICS_ENABLE}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "MASTER_PORT: ${MASTER_PORT:-<unset>}"
 
 mkdir -p "${OUTPUT_DIR}" "${LOGGING_DIR}" "${DIAG_DIR}"
+
+if [[ "${FORENSICS_ENABLE}" == "1" ]]; then
+  export PYTHONFAULTHANDLER="${PYTHONFAULTHANDLER:-1}"
+  export TORCH_SHOW_CPP_STACKTRACES="${TORCH_SHOW_CPP_STACKTRACES:-1}"
+  export TORCH_DISTRIBUTED_DEBUG="${TORCH_DISTRIBUTED_DEBUG:-DETAIL}"
+  export NCCL_ASYNC_ERROR_HANDLING="${NCCL_ASYNC_ERROR_HANDLING:-1}"
+  export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+  export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,COLL,GRAPH}"
+  export NCCL_DEBUG_FILE="${NCCL_DEBUG_FILE:-${DIAG_DIR}/nccl.%h.%p.log}"
+  if command -v ulimit >/dev/null 2>&1; then
+    ulimit -c unlimited || true
+  fi
+fi
 
 echo "Running quick dataset sanity check (limit=${DATASET_QUICK_CHECK_LIMIT})..."
 python3 - "${DATA_PATH}" "${IMAGE_FOLDER}" "${DATASET_QUICK_CHECK_LIMIT}" <<'PY'
@@ -233,6 +262,7 @@ collect_failure_diagnostics() {
     echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-<unset>}"
     echo "master_addr=${MASTER_ADDR:-<unset>}"
     echo "master_port=${MASTER_PORT:-<unset>}"
+    echo "runtime_log=${RUNTIME_LOG:-<unset>}"
     echo
     echo "==== Environment (filtered) ===="
     if has_rg; then
@@ -254,6 +284,28 @@ collect_failure_diagnostics() {
       dmesg | grep -Ei "NVRM|Xid|oom|out of memory" | tail -n 200 || true
     fi
     echo
+    echo "==== Latest launcher logs (tail) ===="
+    ls -1t "${LOG_DIR}"/finetune_lora_llava_v1_5_7b_mydata_*.log 2>/dev/null | head -n 2 | while read -r lf; do
+      echo "--- ${lf} (last 200 lines) ---"
+      tail -n 200 "${lf}" || true
+    done
+    echo
+    echo "==== Runtime log (tail) ===="
+    if [[ -n "${RUNTIME_LOG}" && -f "${RUNTIME_LOG}" ]]; then
+      tail -n 300 "${RUNTIME_LOG}" || true
+      echo
+      echo "==== Runtime log key error lines ===="
+      filter_lines "traceback|runtimeerror|error|exception|cuda|nccl|xid|abort|timeout|sig" < "${RUNTIME_LOG}" | tail -n 200
+    else
+      echo "runtime log missing"
+    fi
+    echo
+    echo "==== NCCL debug files key lines ===="
+    ls -1 "${DIAG_DIR}"/nccl.*.log 2>/dev/null | while read -r nf; do
+      echo "--- ${nf} ---"
+      filter_lines "error|warn|abort|timeout|unhandled|socket|connection|xid|failed" < "${nf}" | tail -n 120
+    done
+    echo
     echo "==== output directory listing ===="
     ls -lah "${OUTPUT_DIR}" || true
     echo
@@ -274,6 +326,14 @@ if [[ -n "${SAMPLE_TRACE_OUTPUT}" ]]; then
     --sample_trace_flush_steps "${SAMPLE_TRACE_FLUSH_STEPS}"
   )
 fi
+BATCH_DEBUG_ARGS=()
+if [[ -n "${BATCH_DEBUG_OUTPUT}" ]]; then
+  BATCH_DEBUG_ARGS=(
+    --batch_debug_output "${BATCH_DEBUG_OUTPUT}"
+    --batch_debug_every_steps "${BATCH_DEBUG_EVERY_STEPS}"
+    --detect_nan_inf_loss "${DETECT_NAN_INF_LOSS}"
+  )
+fi
 
 PYTHON="${PYTHON:-python3}"
 if [[ -n "${DEEPSPEED_LAUNCHER:-}" ]]; then
@@ -286,6 +346,10 @@ else
   fi
 fi
 echo "DeepSpeed launcher: ${DEEPSPEED_CMD[*]}"
+if [[ -z "${RUNTIME_LOG}" ]]; then
+  RUNTIME_LOG="${DIAG_DIR}/runtime_$(timestamp_now).log"
+fi
+echo "Runtime log: ${RUNTIME_LOG}"
 set +e
 "${DEEPSPEED_CMD[@]}" --num_gpus "${NUM_GPUS}" "${TRAIN_ENTRY}" \
   --deepspeed "${DEEPSPEED_CONFIG}" \
@@ -330,8 +394,9 @@ set +e
   --gradient_checkpointing "${GRADIENT_CHECKPOINTING}" \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS}" \
   --lazy_preprocess "${LAZY_PREPROCESS}" \
-  "${SAMPLE_TRACE_ARGS[@]}"
-exit_code=$?
+  "${SAMPLE_TRACE_ARGS[@]}" \
+  "${BATCH_DEBUG_ARGS[@]}" 2>&1 | tee "${RUNTIME_LOG}"
+exit_code=${PIPESTATUS[0]}
 set -e
 if [[ "${exit_code}" -ne 0 ]]; then
   collect_failure_diagnostics "${exit_code}"

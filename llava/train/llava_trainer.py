@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import math
 import torch
 import torch.nn as nn
 
@@ -137,6 +138,8 @@ class LLaVATrainer(Trainer):
         super().__init__(*args, **kwargs)
         self._sample_trace_fp = None
         self._sample_trace_path = None
+        self._batch_debug_fp = None
+        self._batch_debug_path = None
 
     def _maybe_init_sample_trace_writer(self):
         out = getattr(self.args, "sample_trace_output", None)
@@ -172,10 +175,83 @@ class LLaVATrainer(Trainer):
         if row["global_step"] % flush_every == 0:
             self._sample_trace_fp.flush()
 
+    def _maybe_init_batch_debug_writer(self):
+        out = getattr(self.args, "batch_debug_output", None)
+        if not out or self._batch_debug_fp is not None:
+            return
+        base_path = os.path.abspath(os.path.expanduser(str(out)))
+        lr = int(getattr(self.args, "local_rank", -1))
+        if lr >= 0:
+            root, ext = os.path.splitext(base_path)
+            if not ext:
+                ext = ".jsonl"
+            path = f"{root}.rank{lr}{ext}"
+        else:
+            path = base_path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self._batch_debug_path = path
+        self._batch_debug_fp = open(path, "a", encoding="utf-8")
+
+    def _write_batch_debug(self, inputs, loss_value):
+        out = getattr(self.args, "batch_debug_output", None)
+        if not out:
+            return
+        self._maybe_init_batch_debug_writer()
+        if self._batch_debug_fp is None:
+            return
+        step = int(getattr(self.state, "global_step", 0))
+        every = max(1, int(getattr(self.args, "batch_debug_every_steps", 1)))
+        if step % every != 0:
+            return
+
+        row = {
+            "ts": time.time(),
+            "global_step": step,
+            "local_rank": int(getattr(self.args, "local_rank", -1)),
+            "loss": float(loss_value),
+            "batch_size": None,
+            "seq_len": None,
+            "images_shape": None,
+            "gpu_mem_allocated_gb": None,
+            "gpu_mem_reserved_gb": None,
+            "is_nan": bool(math.isnan(float(loss_value))),
+            "is_inf": bool(math.isinf(float(loss_value))),
+        }
+        input_ids = inputs.get("input_ids")
+        if torch.is_tensor(input_ids):
+            if input_ids.ndim >= 1:
+                row["batch_size"] = int(input_ids.shape[0])
+            if input_ids.ndim >= 2:
+                row["seq_len"] = int(input_ids.shape[1])
+        images = inputs.get("images")
+        if torch.is_tensor(images):
+            row["images_shape"] = [int(x) for x in images.shape]
+
+        if torch.cuda.is_available():
+            try:
+                row["gpu_mem_allocated_gb"] = round(float(torch.cuda.memory_allocated()) / 1e9, 4)
+                row["gpu_mem_reserved_gb"] = round(float(torch.cuda.memory_reserved()) / 1e9, 4)
+            except Exception:
+                pass
+
+        self._batch_debug_fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self._batch_debug_fp.flush()
+
     def compute_loss(self, model, inputs, return_outputs=False):
         sample_trace = inputs.pop("_sample_trace", None)
         self._write_sample_trace(sample_trace)
-        return super().compute_loss(model, inputs, return_outputs=return_outputs)
+        loss_out = super().compute_loss(model, inputs, return_outputs=return_outputs)
+        if return_outputs:
+            loss_tensor, outputs = loss_out
+        else:
+            loss_tensor, outputs = loss_out, None
+        loss_val = float(loss_tensor.detach().float().cpu().item())
+        self._write_batch_debug(inputs, loss_val)
+        if bool(getattr(self.args, "detect_nan_inf_loss", False)) and (math.isnan(loss_val) or math.isinf(loss_val)):
+            raise ValueError(f"NaN/Inf loss detected at global_step={int(getattr(self.state, 'global_step', -1))}")
+        if return_outputs:
+            return loss_tensor, outputs
+        return loss_tensor
 
 
     def _get_train_sampler(self) -> Optional[torch.utils.data.Sampler]:
@@ -306,5 +382,12 @@ class LLaVATrainer(Trainer):
             try:
                 fp.flush()
                 fp.close()
+            except Exception:
+                pass
+        fp2 = getattr(self, "_batch_debug_fp", None)
+        if fp2 is not None:
+            try:
+                fp2.flush()
+                fp2.close()
             except Exception:
                 pass
