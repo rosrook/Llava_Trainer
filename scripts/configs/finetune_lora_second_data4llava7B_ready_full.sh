@@ -11,7 +11,7 @@ TRAIN_ENTRY=llava/train/train_mem.py
 DATA_PATH="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/second_data4llava7B_ready_full/vqa_data.json"
 IMAGE_FOLDER="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/second_data4llava7B_ready_full/images"
 
-NUM_GPUS=8
+NUM_GPUS="${NUM_GPUS:-8}"
 DEEPSPEED_CONFIG="./scripts/zero3_logging.json"
 
 # Base model starting point.
@@ -60,5 +60,5 @@ LOGGING_STEPS=10
 TF32=True
 MODEL_MAX_LENGTH=2048
 GRADIENT_CHECKPOINTING=True
-DATALOADER_NUM_WORKERS=4
+DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-4}"
 LAZY_PREPROCESS=True

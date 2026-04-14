@@ -5,6 +5,31 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+timestamp_now() {
+  date +"%Y%m%d_%H%M%S"
+}
+
+infer_visible_gpu_count() {
+  local cvd="${CUDA_VISIBLE_DEVICES:-}"
+  if [[ -z "${cvd}" ]]; then
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      nvidia-smi -L 2>/dev/null | wc -l | tr -d ' '
+      return 0
+    fi
+    echo "0"
+    return 0
+  fi
+  python3 - <<'PY'
+import os
+s=os.environ.get("CUDA_VISIBLE_DEVICES","").strip()
+if not s:
+    print(0)
+else:
+    xs=[x.strip() for x in s.split(",") if x.strip()!=""]
+    print(len(xs))
+PY
+}
+
 # LoRA finetune entrypoint for: liuhaotian/llava-v1.5-7b
 # Load hyperparameters from a config file so it can be reused.
 #
@@ -85,6 +110,8 @@ SAVE_SAFETENSORS="${SAVE_SAFETENSORS:-True}"
 RUN_NAME="${RUN_NAME:-}"
 
 TRAIN_ENTRY="${TRAIN_ENTRY:-llava/train/train_mem.py}"
+DIAG_DIR="${DIAG_DIR:-${OUTPUT_DIR}/diagnostics}"
+DATASET_QUICK_CHECK_LIMIT="${DATASET_QUICK_CHECK_LIMIT:-256}"
 
 if [[ -z "${DATA_PATH:-}" ]]; then
   echo "Error: DATA_PATH is required in config file: ${CONFIG_FILE}"
@@ -93,6 +120,24 @@ fi
 if [[ -z "${IMAGE_FOLDER:-}" ]]; then
   echo "Error: IMAGE_FOLDER is required in config file: ${CONFIG_FILE}"
   exit 1
+fi
+if [[ ! -f "${DATA_PATH}" ]]; then
+  echo "Error: DATA_PATH not found: ${DATA_PATH}"
+  exit 1
+fi
+if [[ ! -d "${IMAGE_FOLDER}" ]]; then
+  echo "Error: IMAGE_FOLDER not found: ${IMAGE_FOLDER}"
+  exit 1
+fi
+
+VISIBLE_GPU_COUNT="$(infer_visible_gpu_count)"
+if [[ "${VISIBLE_GPU_COUNT}" =~ ^[0-9]+$ ]] && [[ "${VISIBLE_GPU_COUNT}" -gt 0 ]]; then
+  if [[ "${NUM_GPUS}" -ne "${VISIBLE_GPU_COUNT}" ]]; then
+    echo "Error: NUM_GPUS (${NUM_GPUS}) does not match visible GPUs (${VISIBLE_GPU_COUNT})."
+    echo "       CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+    echo "       Tip: set NUM_GPUS to ${VISIBLE_GPU_COUNT} or adjust CUDA_VISIBLE_DEVICES."
+    exit 1
+  fi
 fi
 
 echo "Using config: ${CONFIG_FILE}"
@@ -105,6 +150,53 @@ echo "LOGGING_DIR: ${LOGGING_DIR}"
 echo "REPORT_TO: ${REPORT_TO}"
 echo "NUM_GPUS: ${NUM_GPUS}"
 echo "TRAIN_ENTRY: ${TRAIN_ENTRY}"
+echo "DIAG_DIR: ${DIAG_DIR}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-<unset>}"
+echo "MASTER_PORT: ${MASTER_PORT:-<unset>}"
+
+mkdir -p "${OUTPUT_DIR}" "${LOGGING_DIR}" "${DIAG_DIR}"
+
+echo "Running quick dataset sanity check (limit=${DATASET_QUICK_CHECK_LIMIT})..."
+python3 - "${DATA_PATH}" "${IMAGE_FOLDER}" "${DATASET_QUICK_CHECK_LIMIT}" <<'PY'
+import json, os, sys
+from pathlib import Path
+
+json_path = Path(sys.argv[1])
+image_folder = Path(sys.argv[2]).resolve()
+limit = int(sys.argv[3])
+
+with json_path.open("r", encoding="utf-8") as f:
+    data = json.load(f)
+if not isinstance(data, list) or not data:
+    raise SystemExit(f"[preflight] invalid dataset top-level: {type(data).__name__}, empty={not bool(data) if isinstance(data, list) else 'n/a'}")
+
+n = min(len(data), max(1, limit))
+bad = []
+for i in range(n):
+    row = data[i]
+    if not isinstance(row, dict):
+        bad.append((i, "row_not_dict"))
+        continue
+    rel = str(row.get("image", "") or "").strip()
+    conv = row.get("conversations")
+    if not rel:
+        bad.append((i, "missing_image"))
+    else:
+        p = (image_folder / rel).resolve()
+        try:
+            p.relative_to(image_folder)
+        except Exception:
+            bad.append((i, f"path_escape:{rel}"))
+        if not p.exists():
+            bad.append((i, f"missing_file:{rel}"))
+    if not isinstance(conv, list) or len(conv) < 2:
+        bad.append((i, "bad_conversations"))
+if bad:
+    print("[preflight] sample failures:", bad[:20])
+    raise SystemExit(f"[preflight] failed on {len(bad)} / {n} sampled rows.")
+
+print(f"[preflight] dataset looks OK: total={len(data)}, sampled={n}, image_folder={image_folder}")
+PY
 
 read -r -a REPORT_ARR <<< "${REPORT_TO}"
 if [[ ${#REPORT_ARR[@]} -eq 0 ]]; then
@@ -115,7 +207,46 @@ if [[ -n "${RUN_NAME}" ]]; then
   RUN_NAME_ARGS=(--run_name "${RUN_NAME}")
 fi
 
-mkdir -p "${LOGGING_DIR}"
+collect_failure_diagnostics() {
+  local exit_code="$1"
+  local ts
+  ts="$(timestamp_now)"
+  local f="${DIAG_DIR}/failure_${ts}.log"
+  {
+    echo "==== LLaVA Training Failure Diagnostics ===="
+    echo "timestamp=${ts}"
+    echo "exit_code=${exit_code}"
+    echo "root_dir=${ROOT_DIR}"
+    echo "config_file=${CONFIG_FILE}"
+    echo "train_entry=${TRAIN_ENTRY}"
+    echo "data_path=${DATA_PATH}"
+    echo "image_folder=${IMAGE_FOLDER}"
+    echo "output_dir=${OUTPUT_DIR}"
+    echo "num_gpus=${NUM_GPUS}"
+    echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-<unset>}"
+    echo "master_addr=${MASTER_ADDR:-<unset>}"
+    echo "master_port=${MASTER_PORT:-<unset>}"
+    echo
+    echo "==== Environment (filtered) ===="
+    env | rg -N "^(CUDA|NCCL|MASTER|WORLD|RANK|LOCAL_RANK|OMP|PYTORCH|TORCH|WANDB|CONFIG_FILE|NUM_GPUS|DATA_PATH|IMAGE_FOLDER|OUTPUT_DIR)=" || true
+    echo
+    echo "==== nvidia-smi ===="
+    nvidia-smi || true
+    echo
+    echo "==== nvidia-smi topo -m ===="
+    nvidia-smi topo -m || true
+    echo
+    echo "==== dmesg tail (NVRM/Xid/OOM) ===="
+    dmesg | rg -i "NVRM|Xid|oom|out of memory" | tail -n 200 || true
+    echo
+    echo "==== output directory listing ===="
+    ls -lah "${OUTPUT_DIR}" || true
+    echo
+    echo "==== logging directory listing ===="
+    ls -lah "${LOGGING_DIR}" || true
+  } > "${f}" 2>&1
+  echo "Failure diagnostics written: ${f}"
+}
 
 DISABLE_TQDM_ARGS=()
 if [[ "${DISABLE_TQDM}" == "True" ]]; then
@@ -133,7 +264,7 @@ else
   fi
 fi
 echo "DeepSpeed launcher: ${DEEPSPEED_CMD[*]}"
-
+set +e
 "${DEEPSPEED_CMD[@]}" --num_gpus "${NUM_GPUS}" "${TRAIN_ENTRY}" \
   --deepspeed "${DEEPSPEED_CONFIG}" \
   --lora_enable "${LORA_ENABLE}" --lora_r "${LORA_R}" --lora_alpha "${LORA_ALPHA}" --mm_projector_lr "${MM_PROJECTOR_LR}" \
@@ -177,3 +308,9 @@ echo "DeepSpeed launcher: ${DEEPSPEED_CMD[*]}"
   --gradient_checkpointing "${GRADIENT_CHECKPOINTING}" \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS}" \
   --lazy_preprocess "${LAZY_PREPROCESS}"
+exit_code=$?
+set -e
+if [[ "${exit_code}" -ne 0 ]]; then
+  collect_failure_diagnostics "${exit_code}"
+  exit "${exit_code}"
+fi
