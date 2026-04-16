@@ -47,7 +47,7 @@ checkpoint_name="$(basename "${CHECKPOINT_PATH}")"
 if [[ -z "${STEP_EVAL_WORK_DIR}" ]]; then
   STEP_EVAL_WORK_DIR="${SHARED_DIR}/.eval_${checkpoint_name}"
 fi
-MATERIALIZED_DIR="${STEP_EVAL_WORK_DIR}/model"
+MATERIALIZED_DIR="${STEP_EVAL_WORK_DIR}/llava-v1.5-7b-lora-${checkpoint_name}"
 
 echo "ROOT:             ${ROOT}"
 echo "CHECKPOINT_PATH:  ${CHECKPOINT_PATH}"
