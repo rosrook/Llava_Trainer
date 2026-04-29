@@ -38,6 +38,15 @@ def get_mm_adapter_state_maybe_zero_3(named_params, keys_to_match):
     return to_return
 
 
+def get_peft_state_non_lora_maybe_zero_3(named_params, require_grad_only=True):
+    """Collect non-LoRA trainable weights for standalone export."""
+    to_return = {k: t for k, t in named_params if "lora_" not in k}
+    if require_grad_only:
+        to_return = {k: t for k, t in to_return.items() if t.requires_grad}
+    to_return = {k: maybe_zero_3(v, ignore_status=True, name=k).cpu() for k, v in to_return.items()}
+    return to_return
+
+
 def split_to_even_chunks(indices, lengths, num_chunks):
     """
     Split a list of indices into `chunks` chunks of roughly equal lengths.
@@ -368,7 +377,18 @@ class LLaVATrainer(Trainer):
                 self.model.config.save_pretrained(output_dir)
                 torch.save(weight_to_save, os.path.join(output_dir, f'mm_projector.bin'))
         else:
+            from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
+            checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+            run_dir = self._get_output_dir(trial=trial)
+            output_dir = os.path.join(run_dir, checkpoint_folder)
             super(LLaVATrainer, self)._save_checkpoint(model, trial, metrics)
+            # For LoRA training, checkpoint-* usually stores adapter weights.
+            # Save non-LoRA trainables too, so each step can be exported as a standalone HF model.
+            if getattr(self.args, "lora_enable", False):
+                if self.args.local_rank == 0 or self.args.local_rank == -1:
+                    os.makedirs(output_dir, exist_ok=True)
+                    non_lora_state_dict = get_peft_state_non_lora_maybe_zero_3(self.model.named_parameters())
+                    torch.save(non_lora_state_dict, os.path.join(output_dir, "non_lora_trainables.bin"))
 
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         if getattr(self.args, 'tune_mm_mlp_adapter', False):

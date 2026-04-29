@@ -992,7 +992,12 @@ def train(attn_implementation=None):
                     args=training_args,
                     **data_module)
 
-    if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
+    resume_from = os.environ.get("RESUME_FROM_CHECKPOINT", "").strip()
+    if resume_from:
+        rank0_print(f"Resuming from explicit checkpoint: {resume_from}")
+        trainer.train(resume_from_checkpoint=resume_from)
+    elif list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
+        rank0_print("Resuming from latest checkpoint in output_dir.")
         trainer.train(resume_from_checkpoint=True)
     else:
         trainer.train()

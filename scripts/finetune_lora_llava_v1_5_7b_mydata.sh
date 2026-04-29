@@ -86,6 +86,8 @@ IMAGE_ASPECT_RATIO="${IMAGE_ASPECT_RATIO:-pad}"
 GROUP_BY_MODALITY_LENGTH="${GROUP_BY_MODALITY_LENGTH:-True}"
 BF16="${BF16:-True}"
 OUTPUT_DIR="${OUTPUT_DIR:-./checkpoints/llava-v1.5-7b-mydata-lora}"
+KEEP_ALL_CHECKPOINTS="${KEEP_ALL_CHECKPOINTS:-true}"
+UNIQUE_OUTPUT_DIR="${UNIQUE_OUTPUT_DIR:-false}"
 NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-3}"
 PER_DEVICE_TRAIN_BATCH_SIZE="${PER_DEVICE_TRAIN_BATCH_SIZE:-2}"
 PER_DEVICE_EVAL_BATCH_SIZE="${PER_DEVICE_EVAL_BATCH_SIZE:-2}"
@@ -178,6 +180,28 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-<unset>}"
 echo "MASTER_PORT: ${MASTER_PORT:-<unset>}"
 
 mkdir -p "${OUTPUT_DIR}" "${LOGGING_DIR}" "${DIAG_DIR}"
+
+# Keep step checkpoints by default so resuming from arbitrary steps is possible.
+# Set KEEP_ALL_CHECKPOINTS=false to re-enable pruning via SAVE_TOTAL_LIMIT.
+SAVE_TOTAL_LIMIT_ARGS=()
+if [[ "${KEEP_ALL_CHECKPOINTS}" == "true" ]]; then
+  echo "Checkpoint retention: keep all checkpoint-* directories."
+else
+  if [[ -n "${SAVE_TOTAL_LIMIT}" ]]; then
+    SAVE_TOTAL_LIMIT_ARGS=(--save_total_limit "${SAVE_TOTAL_LIMIT}")
+    echo "Checkpoint retention: save_total_limit=${SAVE_TOTAL_LIMIT}"
+  fi
+fi
+
+# Optional isolation: each run can use its own output directory.
+if [[ "${UNIQUE_OUTPUT_DIR}" == "true" ]]; then
+  run_suffix="$(timestamp_now)"
+  OUTPUT_DIR="${OUTPUT_DIR}_${run_suffix}"
+  LOGGING_DIR="${OUTPUT_DIR}/tb"
+  DIAG_DIR="${OUTPUT_DIR}/diagnostics"
+  mkdir -p "${OUTPUT_DIR}" "${LOGGING_DIR}" "${DIAG_DIR}"
+  echo "Using unique output dir for this run: ${OUTPUT_DIR}"
+fi
 
 if [[ "${FORENSICS_ENABLE}" == "1" ]]; then
   export PYTHONFAULTHANDLER="${PYTHONFAULTHANDLER:-1}"
@@ -374,7 +398,8 @@ set +e
   --evaluation_strategy "${EVALUATION_STRATEGY}" \
   --save_strategy "${SAVE_STRATEGY}" \
   --save_steps "${SAVE_STEPS}" \
-  --save_total_limit "${SAVE_TOTAL_LIMIT}" \
+  "${SAVE_TOTAL_LIMIT_ARGS[@]}" \
+  --save_only_model False \
   --learning_rate "${LEARNING_RATE}" \
   --weight_decay "${WEIGHT_DECAY}" \
   --warmup_ratio "${WARMUP_RATIO}" \
@@ -402,3 +427,11 @@ if [[ "${exit_code}" -ne 0 ]]; then
   collect_failure_diagnostics "${exit_code}"
   exit "${exit_code}"
 fi
+
+MANIFEST_PATH="${OUTPUT_DIR}/checkpoint_manifest.txt"
+{
+  echo "output_dir=${OUTPUT_DIR}"
+  echo "generated_at=$(timestamp_now)"
+  ls -1d "${OUTPUT_DIR}"/checkpoint-* 2>/dev/null | sort -V
+} > "${MANIFEST_PATH}"
+echo "Checkpoint manifest written: ${MANIFEST_PATH}"
