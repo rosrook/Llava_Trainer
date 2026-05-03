@@ -89,6 +89,21 @@ def load_array(path: Path) -> list:
     return data
 
 
+def _has_traversal(rel: str) -> bool:
+    """Lexical (NOT symlink-following) check that ``rel`` stays inside the
+    image folder. Rejects absolute paths and any ``..`` segment after
+    normalization. Follows symlinks is the responsibility of ``exists()``,
+    NOT this security check, because content-addressable image stores
+    routinely use symlinks that point outside the visible folder yet are
+    legitimate.
+    """
+    rel_path = Path(rel)
+    if rel_path.is_absolute():
+        return True
+    parts = Path(os.path.normpath(rel)).parts
+    return any(p == ".." for p in parts)
+
+
 def validate(rows: list, image_folder: Path, sample_limit: int) -> None:
     if not rows:
         raise SystemExit("[preflight] dataset is empty")
@@ -110,15 +125,15 @@ def validate(rows: list, image_folder: Path, sample_limit: int) -> None:
         if not rel:
             bad.append((i, "missing_image_field"))
         else:
-            p = (image_folder_resolved / rel).resolve()
-            try:
-                p.relative_to(image_folder_resolved)
-            except ValueError:
+            if _has_traversal(rel):
                 bad.append((i, f"path_escape:{rel}"))
-            if not p.exists():
-                missing_files += 1
-                if len(bad) < 20:
-                    bad.append((i, f"missing_file:{rel}"))
+            else:
+                # exists() follows symlinks; that is exactly what we want.
+                file_path = image_folder_resolved / rel
+                if not file_path.exists():
+                    missing_files += 1
+                    if len(bad) < 20:
+                        bad.append((i, f"missing_file:{rel}"))
 
         conv = row.get("conversations")
         if not isinstance(conv, list) or len(conv) < 2:
