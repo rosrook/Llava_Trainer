@@ -93,6 +93,11 @@ SAVE_SAFETENSORS=True
 TF32=True
 MODEL_MAX_LENGTH=2048
 GRADIENT_CHECKPOINTING=True
+# Force the non-reentrant checkpoint impl. With PEFT/LoRA freezing the base
+# weights, the legacy reentrant variant sees "no inputs have requires_grad",
+# silently drops backward, and DeepSpeed then divides by 0 inside grad
+# scaling -> SIGFPE (-8). Non-reentrant handles this case cleanly.
+GRADIENT_CHECKPOINTING_KWARGS='{"use_reentrant": false}'
 DATALOADER_NUM_WORKERS=4
 LAZY_PREPROCESS=True
 
@@ -199,6 +204,7 @@ echo "[launcher] runtime log: ${RUNTIME_LOG}"
   --tf32 "${TF32}" \
   --model_max_length "${MODEL_MAX_LENGTH}" \
   --gradient_checkpointing "${GRADIENT_CHECKPOINTING}" \
+  --gradient_checkpointing_kwargs "${GRADIENT_CHECKPOINTING_KWARGS}" \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS}" \
   --lazy_preprocess "${LAZY_PREPROCESS}" 2>&1 | tee "${RUNTIME_LOG}"
 
