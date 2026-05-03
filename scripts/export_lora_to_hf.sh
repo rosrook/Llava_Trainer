@@ -4,7 +4,7 @@
 # Export a LoRA training checkpoint to a standalone Hugging Face model dir.
 # This script must run in the *training* conda env (llava_train: transformers
 # 4.37, peft, deepspeed, etc.) because it imports llava.model.
-# Step 2 (eval_my_checkpoint_mmbench.sh) runs in the *eval* env (llava_eval)
+# Step 2 (eval_my_checkpoint_mmbench.sh) runs in the *eval* env (llava_vlmevalkit)
 # and consumes the HF dir produced here.
 #
 # Required env:
@@ -89,7 +89,7 @@ echo "[export] DONE. HF model is at:"
 echo "         ${OUTPUT_DIR}"
 echo
 echo "[export] Next: switch to the eval env and run Step 2."
-echo "         conda activate llava_eval"
+echo "         conda activate llava_vlmevalkit"
 echo "         cd <your xuzhou_vlmeval clone>"
 echo "         CHECKPOINT_PATH=${CHECKPOINT_PATH} \\"
 echo "           bash eval_my_checkpoint_mmbench.sh"
