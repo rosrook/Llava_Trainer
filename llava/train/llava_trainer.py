@@ -384,10 +384,18 @@ class LLaVATrainer(Trainer):
             super(LLaVATrainer, self)._save_checkpoint(model, trial, metrics)
             # For LoRA training, checkpoint-* usually stores adapter weights.
             # Save non-LoRA trainables too, so each step can be exported as a standalone HF model.
+            #
+            # IMPORTANT: get_peft_state_non_lora_maybe_zero_3 calls
+            # deepspeed.zero.GatheredParameters under ZeRO-3, which is a NCCL
+            # collective and MUST run on every rank. Putting it inside an
+            # `if local_rank == 0` branch causes a deadlock: rank 0 enters the
+            # gather and waits forever for the other ranks, which have already
+            # returned from _save_checkpoint and started the next forward pass.
+            # The disk write itself, on the other hand, has to be rank-0-only.
             if getattr(self.args, "lora_enable", False):
+                non_lora_state_dict = get_peft_state_non_lora_maybe_zero_3(self.model.named_parameters())
                 if self.args.local_rank == 0 or self.args.local_rank == -1:
                     os.makedirs(output_dir, exist_ok=True)
-                    non_lora_state_dict = get_peft_state_non_lora_maybe_zero_3(self.model.named_parameters())
                     torch.save(non_lora_state_dict, os.path.join(output_dir, "non_lora_trainables.bin"))
 
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
