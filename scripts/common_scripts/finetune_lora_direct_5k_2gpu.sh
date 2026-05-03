@@ -12,14 +12,16 @@
 # Notes:
 #   - All hyperparameters are HARD-CODED below. Edit the file directly to
 #     change them; this script intentionally does NOT read CONFIG_FILE.
-#   - Each saved checkpoint-XXX/ is self-contained (LoRA adapter +
-#     non_lora_trainables.bin + config.json), thanks to the wrapper
-#     scripts/_train_with_step_save.py. You can export any step via
-#       python3 scripts/export_llava_lora_checkpoint_hf.py \
-#         --model-path  <OUTPUT_DIR>/checkpoint-<STEP> \
-#         --model-base  liuhaotian/llava-v1.5-7b \
-#         --shared-dir  <OUTPUT_DIR> \
-#         --save-model-path <ANY_HF_DIR>
+#   - Each saved checkpoint-XXX/ is self-contained:
+#       * LoRA adapter (HF Trainer)
+#       * non_lora_trainables.bin    (LLaVATrainer._save_checkpoint)
+#       * config.json + step_loss.json (scripts/_train_with_step_save.py)
+#     Standalone export of any step:
+#       python3 scripts/export_lora_checkpoint_to_hf.py \
+#         --base_model    liuhaotian/llava-v1.5-7b \
+#         --checkpoint_dir <OUTPUT_DIR>/checkpoint-<STEP> \
+#         --output_dir    <ANY_HF_DIR> --bf16
+#     (or scripts/export_llava_lora_checkpoint_hf.py with --shared-dir.)
 #   - At the end of training, OUTPUT_DIR/best_step_candidates.json ranks
 #     checkpoints by smoothed training loss as a HEURISTIC starting point;
 #     a copy of the lowest-loss checkpoint is placed at OUTPUT_DIR/

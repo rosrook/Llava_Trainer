@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
-"""LLaVA LoRA training entry that fixes "intermediate checkpoint cannot be
-loaded standalone" by writing ``non_lora_trainables.bin`` + ``config.json``
-into every ``checkpoint-XXX/`` directory at save time.
+"""LLaVA LoRA training entry that augments ``LLaVATrainer`` with three things
+the upstream + in-tree trainer modification do NOT provide:
 
-Stock LLaVA only writes ``non_lora_trainables.bin`` once, at end-of-training,
-to the top-level ``output_dir`` (see ``llava/train/train.py:safe_save_model``
-and the LoRA branch right above ``__main__``).  As a result, intermediate
-checkpoint directories miss the non-LoRA trainables (mm_projector,
-embed_tokens when use_im_start_end, ...) and ``LlavaLlamaForCausalLM`` cannot
-reconstruct the full model from a single ``checkpoint-XXX/`` alone.
-
-This wrapper:
-  * Patches ``LLaVATrainer.__init__`` to register a ``TrainerCallback`` that
-    on every ``on_save`` event collects non-LoRA trainables (ZeRO-3 aware
-    via LLaVA's ``maybe_zero_3``) and dumps them along with ``config.json``
-    into the just-created ``checkpoint-XXX/`` folder.
-  * Records per-log training metrics into
-    ``<output_dir>/training_metrics.jsonl``.
-  * On train-end ranks all surviving ``checkpoint-*`` directories by
-    smoothed training loss (window=10 logs) and writes
-    ``<output_dir>/best_step_candidates.json``. Train-loss alone is a weak
-    proxy for "best", so this is a HEURISTIC starting point: confirm with a
-    real downstream eval (e.g. MMBench) before picking.
+1. ``checkpoint-XXX/config.json`` so each step is fully self-contained for
+   ``LlavaLlamaForCausalLM.from_pretrained()`` style export. (The in-tree
+   ``LLaVATrainer._save_checkpoint`` already writes ``non_lora_trainables.bin``
+   for the LoRA path, so we no longer duplicate that work here.)
+2. ``checkpoint-XXX/step_loss.json`` recording the smoothed training loss at
+   save time, used downstream for ranking candidates.
+3. ``<output_dir>/training_metrics.jsonl`` (per-log metrics) and
+   ``<output_dir>/best_step_candidates.json`` (post-train ranking by
+   smoothed training loss). The lowest-loss checkpoint is also copied to
+   ``<output_dir>/best_by_train_loss/``. Train-loss is a weak proxy for
+   downstream task performance: treat the ranking as a heuristic starting
+   point and verify the top-K candidates with a real eval (e.g. MMBench
+   via ``scripts/common_scripts/eval_mmbench_v15_7b_step_checkpoint.sh``).
 
 Then runs the original ``llava.train.train.train`` with FlashAttention-2,
 identical to upstream ``llava/train/train_mem.py``.
@@ -36,7 +29,6 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import torch
 from transformers import TrainerCallback
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 
@@ -50,7 +42,8 @@ def _is_main_process(args) -> bool:
 
 
 class StepSaveAndMetricsCallback(TrainerCallback):
-    """Make every checkpoint-XXX self-contained and track per-step metrics."""
+    """Augment per-checkpoint output with config.json + step_loss.json,
+    record per-log training metrics, and rank steps at the end."""
 
     def __init__(self) -> None:
         self._loss_history: list[tuple[int, float]] = []
@@ -70,48 +63,36 @@ class StepSaveAndMetricsCallback(TrainerCallback):
 
     # --- callbacks -------------------------------------------------------
     def on_save(self, args, state, control, model=None, **kwargs):
-        """Dump non_lora_trainables.bin + config.json into checkpoint-XXX."""
-        if model is None:
-            return
-        if not bool(getattr(args, "lora_enable", False)):
+        """Dump config.json + step_loss.json into checkpoint-XXX.
+        non_lora_trainables.bin is already written by LLaVATrainer._save_checkpoint
+        for the LoRA path, so we do not duplicate that work here."""
+        if model is None or not _is_main_process(args):
             return
 
         ckpt_dir = self._ckpt_dir(args, state)
-        # Trainer creates the dir before calling on_save, but we double-check.
-        if not ckpt_dir.is_dir() and _is_main_process(args):
+        if not ckpt_dir.is_dir():
             ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-        # ZeRO-3 aware gather; cpu().clone() inside maybe_zero_3.
-        non_lora_state = llava_train_module.get_peft_state_non_lora_maybe_zero_3(
-            model.named_parameters()
-        )
+        try:
+            model.config.save_pretrained(str(ckpt_dir))
+        except Exception as e:
+            print(f"[StepSaveCallback] failed to save config.json: {e}", flush=True)
 
-        if _is_main_process(args):
-            try:
-                torch.save(non_lora_state, str(ckpt_dir / "non_lora_trainables.bin"))
-            except Exception as e:
-                print(f"[StepSaveCallback] failed to save non_lora_trainables: {e}", flush=True)
-            try:
-                model.config.save_pretrained(str(ckpt_dir))
-            except Exception as e:
-                print(f"[StepSaveCallback] failed to save config.json: {e}", flush=True)
-
-            # Stamp the smoothed loss for later best-step ranking.
-            try:
-                smoothed = self._smoothed_loss()
-                with (ckpt_dir / "step_loss.json").open("w", encoding="utf-8") as fh:
-                    json.dump(
-                        {
-                            "global_step": int(state.global_step),
-                            "epoch": float(getattr(state, "epoch", 0.0) or 0.0),
-                            "loss_smoothed": smoothed,
-                            "elapsed_sec": round(time.time() - self._t0, 2),
-                        },
-                        fh,
-                        ensure_ascii=False,
-                    )
-            except Exception as e:
-                print(f"[StepSaveCallback] failed to save step_loss.json: {e}", flush=True)
+        try:
+            smoothed = self._smoothed_loss()
+            with (ckpt_dir / "step_loss.json").open("w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "global_step": int(state.global_step),
+                        "epoch": float(getattr(state, "epoch", 0.0) or 0.0),
+                        "loss_smoothed": smoothed,
+                        "elapsed_sec": round(time.time() - self._t0, 2),
+                    },
+                    fh,
+                    ensure_ascii=False,
+                )
+        except Exception as e:
+            print(f"[StepSaveCallback] failed to save step_loss.json: {e}", flush=True)
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if not _is_main_process(args) or not logs:
