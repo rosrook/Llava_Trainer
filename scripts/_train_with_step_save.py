@@ -29,8 +29,37 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import transformers
 from transformers import TrainerCallback
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
+
+
+# --------------------------------------------------------------------------
+# Force use_reentrant=False for gradient_checkpointing.
+#
+# Why: with PEFT/LoRA freezing base weights, reentrant checkpointing sees
+# blocks whose inputs all have requires_grad=False; the legacy reentrant
+# variant then silently drops backward, returning None gradients, and
+# DeepSpeed's grad-scaling pipeline downstream divides by zero, raising
+# SIGFPE (-8) on the worker process. Non-reentrant handles the all-no-grad
+# case cleanly.
+#
+# Why monkey-patch instead of --gradient_checkpointing_kwargs: transformers
+# 4.37 (pinned by this LLaVA fork) does not parse the JSON form of that CLI
+# argument; we sidestep argparse entirely.
+# --------------------------------------------------------------------------
+_orig_gce = transformers.modeling_utils.PreTrainedModel.gradient_checkpointing_enable
+
+
+def _patched_gce(self, gradient_checkpointing_kwargs=None):
+    if gradient_checkpointing_kwargs is None:
+        gradient_checkpointing_kwargs = {}
+    gradient_checkpointing_kwargs.setdefault("use_reentrant", False)
+    return _orig_gce(self, gradient_checkpointing_kwargs=gradient_checkpointing_kwargs)
+
+
+transformers.modeling_utils.PreTrainedModel.gradient_checkpointing_enable = _patched_gce  # type: ignore[assignment]
+
 
 from llava.train import train as llava_train_module
 from llava.train.llava_trainer import LLaVATrainer
