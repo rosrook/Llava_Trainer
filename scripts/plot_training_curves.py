@@ -158,13 +158,52 @@ def _setup_axes(ax, title: str, xlabel: str, ylabel: str) -> None:
     ax.tick_params(axis="both", labelsize=10)
 
 
-def plot_loss(rows: list[dict], out_path: Path) -> None:
-    """Plot training loss with auto log/linear y-axis selection.
+def _auto_zoom_range(smoothed: np.ndarray) -> tuple[float, float]:
+    """Auto-derive a ymin, ymax for the convergence-tail zoom panel.
 
-    SFT runs typically span >1 order of magnitude (e.g. 1.5 -> 0.04); a linear
-    axis squashes the tail into a flat line. We switch to log when
-    max(loss)/min(loss) > 8 so the convergence tail stays readable. Also
-    annotate the global minimum so the figure self-explains the best epoch.
+    Heuristic: take the last 50% of the smoothed series, then add a small
+    margin around its [min, max] so the band has visual headroom.
+    """
+    if smoothed.size == 0:
+        return 0.0, 1.0
+    tail = smoothed[smoothed.size // 2 :]
+    lo, hi = float(np.nanmin(tail)), float(np.nanmax(tail))
+    span = max(hi - lo, 1e-3)
+    return max(lo - 0.2 * span, 0.0), hi + 0.2 * span
+
+
+def _parse_zoom_range(spec: Optional[str]) -> Optional[tuple[float, float]]:
+    if not spec:
+        return None
+    try:
+        a, b = spec.split(",")
+        ymin, ymax = float(a), float(b)
+        if ymax <= ymin:
+            raise ValueError("ymax must be > ymin")
+        return ymin, ymax
+    except Exception as e:
+        raise SystemExit(f"--loss-zoom-range must be 'ymin,ymax', got {spec!r} ({e})")
+
+
+def plot_loss(
+    rows: list[dict],
+    out_path: Path,
+    style: str = "clean",
+    zoom_range: Optional[tuple[float, float]] = None,
+) -> None:
+    """Plot training loss in one of several styles.
+
+    style:
+      - "clean":    single smoothed line, linear y-axis. Default; thesis-friendly.
+      - "with_raw": same as clean but also overlays the raw curve in faint gray.
+      - "log":      single smoothed line, log y-axis with plain decimal ticks.
+      - "dual":     two side-by-side panels (linear | log).
+      - "zoom":     single panel, y-axis clipped to ``zoom_range`` (auto if not
+                    given). Best for showing late-stage convergence detail.
+      - "split":    two stacked panels: top = full range, bottom = zoom into
+                    ``zoom_range`` (auto if not given). Recommended for thesis
+                    when you want both the global drop and the convergence
+                    detail in a single figure.
     """
     x, y = _series(rows, "loss")
     if x.size == 0:
@@ -172,37 +211,95 @@ def plot_loss(rows: list[dict], out_path: Path) -> None:
         return
 
     smoothed = _ema(y, alpha=0.05)
-    eps = 1e-9
-    use_log = (np.nanmax(y) / max(float(np.nanmin(y)), eps)) > 8.0
-
-    fig, ax = plt.subplots(figsize=(7.2, 4.2))
-    ax.plot(x, y, color="#a9b4c8", linewidth=0.9, alpha=0.55, label="train loss (raw)")
-    ax.plot(x, smoothed, color="#1f4e8c", linewidth=2.0, label="EMA(α=0.05)")
-
-    # mark global min (using smoothed series, more robust than raw)
     min_idx = int(np.argmin(smoothed))
-    ax.scatter([x[min_idx]], [smoothed[min_idx]], color="#c7522a", zorder=5, s=42)
-    ax.annotate(
-        f"min EMA loss = {smoothed[min_idx]:.4f} @ step {x[min_idx]}",
-        xy=(x[min_idx], smoothed[min_idx]),
-        xytext=(10, 12),
-        textcoords="offset points",
-        fontsize=10,
-        color="#5a2515",
-        arrowprops=dict(arrowstyle="-", color="#c7522a", lw=0.8),
-    )
 
-    if use_log:
-        ax.set_yscale("log")
-        ylabel = "loss (log scale)"
+    if zoom_range is None and style in ("zoom", "split"):
+        zoom_range = _auto_zoom_range(smoothed)
+
+    def _draw(
+        ax,
+        *,
+        log_y: bool = False,
+        with_raw: bool = False,
+        ylim: Optional[tuple[float, float]] = None,
+        annotate_min: bool = True,
+        legend: bool = True,
+    ) -> None:
+        if with_raw:
+            ax.plot(x, y, color="#a9b4c8", linewidth=0.9, alpha=0.55, label="raw")
+            ax.plot(x, smoothed, color="#1f4e8c", linewidth=2.0, label="smoothed")
+            if legend:
+                ax.legend(fontsize=10, loc="upper right")
+        else:
+            ax.plot(x, smoothed, color="#1f4e8c", linewidth=2.0)
+        if annotate_min:
+            mx, my = x[min_idx], smoothed[min_idx]
+            in_view = ylim is None or (ylim[0] <= my <= ylim[1])
+            if in_view:
+                ax.scatter([mx], [my], color="#c7522a", zorder=5, s=36)
+                ax.annotate(
+                    f"min loss = {my:.4f} @ step {mx}",
+                    xy=(mx, my),
+                    xytext=(10, 12),
+                    textcoords="offset points",
+                    fontsize=9,
+                    color="#5a2515",
+                )
+        if log_y:
+            ax.set_yscale("log")
+            from matplotlib.ticker import ScalarFormatter
+            fmt = ScalarFormatter()
+            fmt.set_scientific(False)
+            fmt.set_useOffset(False)
+            ax.yaxis.set_major_formatter(fmt)
+            ax.yaxis.set_minor_formatter(fmt)
+            ax.tick_params(axis="y", which="minor", labelsize=8)
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+
+    used = style
+    if style == "dual":
+        fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(12.5, 4.2), sharex=True)
+        _draw(ax_l, log_y=False)
+        _setup_axes(ax_l, "Training Loss (linear)", "global step", "loss")
+        _draw(ax_r, log_y=True)
+        _setup_axes(ax_r, "Training Loss (log)", "global step", "loss")
+    elif style == "split":
+        fig, (ax_t, ax_b) = plt.subplots(
+            2, 1, figsize=(7.6, 6.0), sharex=True,
+            gridspec_kw={"height_ratios": [1, 1.3], "hspace": 0.18},
+        )
+        _draw(ax_t, log_y=False, annotate_min=False, legend=False)
+        _setup_axes(ax_t, "Training Loss (full range)", "", "loss")
+        _draw(ax_b, log_y=False, ylim=zoom_range, annotate_min=True, legend=False)
+        zr = zoom_range or (float(np.nanmin(smoothed)), float(np.nanmax(smoothed)))
+        _setup_axes(
+            ax_b,
+            f"Zoom: {zr[0]:.3f}–{zr[1]:.3f}",
+            "global step",
+            "loss",
+        )
+    elif style == "zoom":
+        fig, ax = plt.subplots(figsize=(7.2, 4.2))
+        _draw(ax, log_y=False, ylim=zoom_range)
+        zr = zoom_range or (float(np.nanmin(smoothed)), float(np.nanmax(smoothed)))
+        _setup_axes(
+            ax,
+            f"Training Loss (zoom {zr[0]:.3f}–{zr[1]:.3f})",
+            "global step",
+            "loss",
+        )
     else:
-        ylabel = "loss"
-    _setup_axes(ax, "Training Loss", "global step", ylabel)
-    ax.legend(fontsize=10, loc="upper right")
+        fig, ax = plt.subplots(figsize=(7.2, 4.2))
+        log_y = style == "log"
+        _draw(ax, log_y=log_y, with_raw=(style == "with_raw"))
+        _setup_axes(ax, "Training Loss", "global step", "loss")
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
-    print(f"[plot] wrote {out_path} (y-axis: {'log' if use_log else 'linear'})")
+    extra = f", zoom={zoom_range}" if zoom_range and style in ("zoom", "split") else ""
+    print(f"[plot] wrote {out_path} (style: {used}{extra})")
 
 
 def plot_lr(rows: list[dict], out_path: Path) -> None:
@@ -327,6 +424,23 @@ def main() -> None:
         "Default: <metrics-dir>/tb if it exists.",
     )
     parser.add_argument("--eval-results", default=None, help="Optional CSV: columns step,<metric>")
+    parser.add_argument(
+        "--loss-style",
+        default="split",
+        choices=["clean", "with_raw", "log", "dual", "zoom", "split"],
+        help="loss plot style. 'split' (default): top=full range, bottom=zoom; "
+        "best for thesis when you want to show both the early drop and the "
+        "convergence-tail detail. 'clean': single smoothed line, linear y. "
+        "'with_raw': also overlays raw. 'log': log y with decimal ticks. "
+        "'dual': linear+log side by side. 'zoom': single panel clipped to "
+        "--loss-zoom-range.",
+    )
+    parser.add_argument(
+        "--loss-zoom-range",
+        default=None,
+        help="ymin,ymax for the zoom panel (used by 'zoom' and 'split' styles), "
+        "e.g. '0.01,0.04'. If not set, auto-derived from the smoothed tail.",
+    )
     args = parser.parse_args()
 
     metrics_path = Path(args.metrics).expanduser().resolve()
@@ -351,7 +465,12 @@ def main() -> None:
     else:
         print("[plot] no tb-dir resolved; grad_norm fallback disabled")
 
-    plot_loss(rows, out_dir / "loss_curve.png")
+    plot_loss(
+        rows,
+        out_dir / "loss_curve.png",
+        style=args.loss_style,
+        zoom_range=_parse_zoom_range(args.loss_zoom_range),
+    )
     plot_lr(rows, out_dir / "lr_schedule.png")
     plot_grad_norm(rows, out_dir / "grad_norm.png", tb_dir)
 
