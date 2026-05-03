@@ -52,7 +52,12 @@ MM_USE_IM_START_END=False
 MM_USE_IM_PATCH_TOKEN=False
 IMAGE_ASPECT_RATIO="pad"
 GROUP_BY_MODALITY_LENGTH=True
-BF16=True
+# Precision: bf16 + flash-attn + ZeRO-3 has been observed to deadlock /
+# misbehave on this machine's image. Falling back to fp16 (with DeepSpeed's
+# dynamic loss scaling, see scripts/zero3.json) which is the configuration
+# we know works on H20-3e.
+BF16=False
+FP16=True
 
 LORA_ENABLE=True
 LORA_R=128
@@ -179,6 +184,7 @@ echo "[launcher] runtime log: ${RUNTIME_LOG}"
   --image_aspect_ratio "${IMAGE_ASPECT_RATIO}" \
   --group_by_modality_length "${GROUP_BY_MODALITY_LENGTH}" \
   --bf16 "${BF16}" \
+  --fp16 "${FP16}" \
   --output_dir "${OUTPUT_DIR}" \
   --num_train_epochs "${NUM_TRAIN_EPOCHS}" \
   --per_device_train_batch_size "${PER_DEVICE_TRAIN_BATCH_SIZE}" \
