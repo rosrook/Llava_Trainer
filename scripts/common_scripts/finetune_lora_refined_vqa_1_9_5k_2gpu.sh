@@ -25,16 +25,16 @@ NUM_GPUS=2
 MASTER_PORT="${MASTER_PORT:-29531}"
 
 # ---- Source data / converted data / output paths ----------------------------
-SOURCE_JSON="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/second_refined_and_expanded_vqa_data/refined_vqa_dataset_1_9.json"
-CONVERTED_DIR="/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/bysj_second_run/ok_for_training/refined_vqa_1_9_direct_5k"
-DATA_PATH="${CONVERTED_DIR}/vqa.jsonl"
-IMAGE_FOLDER="${CONVERTED_DIR}/images"
-OUTPUT_DIR="/mnt/tidal-alsh01/dataset/perceptionVLM/models_zhuxuzhou/bysj/Llava_v1_5_7B/refined_vqa_1_9_direct_5k"
+SOURCE_JSON="${SOURCE_JSON:-/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/second_refined_and_expanded_vqa_data/refined_vqa_dataset_1_9.json}"
+CONVERTED_DIR="${CONVERTED_DIR:-/mnt/tidal-alsh01/dataset/perceptionVLMData/zhuxuzhou_test_data/bysj_second_run/ok_for_training/refined_vqa_1_9_direct_5k}"
+DATA_PATH="${DATA_PATH:-${CONVERTED_DIR}/vqa.jsonl}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-${CONVERTED_DIR}/images}"
+OUTPUT_DIR="${OUTPUT_DIR:-/mnt/tidal-alsh01/dataset/perceptionVLM/models_zhuxuzhou/bysj/Llava_v1_5_7B/refined_vqa_1_9_direct_5k}"
 
 # ---- Conversion settings -----------------------------------------------------
-SAMPLE_SIZE=5000
-SAMPLE_SEED=42
-ANSWER_MODE="letter"   # letter | letter_text | explanation
+SAMPLE_SIZE="${SAMPLE_SIZE:-5000}"
+SAMPLE_SEED="${SAMPLE_SEED:-42}"
+ANSWER_MODE="${ANSWER_MODE:-letter}"   # letter | letter_text | explanation
 
 # ---- Model / LoRA ------------------------------------------------------------
 MODEL_NAME_OR_PATH="liuhaotian/llava-v1.5-7b"
@@ -74,7 +74,7 @@ LOGGING_STEPS=5
 
 REPORT_TO="tensorboard"
 LOGGING_DIR="${OUTPUT_DIR}/tb"
-RUN_NAME="llava_v1_5_7b_lora_refined_vqa_1_9_direct_5k_2gpu"
+RUN_NAME="${RUN_NAME:-llava_v1_5_7b_lora_refined_vqa_1_9_direct_5k_2gpu}"
 LOGGING_FIRST_STEP=True
 LOG_LEVEL=info
 LOGGING_NAN_INF_FILTER=True
