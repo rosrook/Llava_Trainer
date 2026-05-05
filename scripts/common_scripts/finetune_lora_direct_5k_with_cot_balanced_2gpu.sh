@@ -14,12 +14,22 @@
 # Source data is the ShareGPT-style JSONL produced upstream by the cast_vqa
 # pipeline, which (per the upstream "sft_with_cot" mode) takes each direct_5k
 # QA and APPENDS an explanation to the GPT response while keeping the human
-# turn and image reference unchanged. Image filenames still resolve into the
-# original direct_5k images folder, so we point IMAGE_FOLDER there.
+# turn and image reference unchanged. Image filenames (basenames) still
+# resolve into the original direct_5k images folder.
 #
-# IMPORTANT: before launching, run the spot-check in the chat (3 random
-# overlapping ids should all show same-image, same-human, and "new gpt
-# starts with old gpt"). If that does not hold, do NOT call this an ablation.
+# Verification done (2026-05-05):
+#   intersection-by-image-filename = 4999 / 5000   (4999 ⊂ direct_5k)
+#   spot-check 3 samples: human turn byte-equal, new gpt starts with old gpt
+#   so the only variable is the appended CoT explanation.
+#
+# Quirks of the upstream JSONL (handled below):
+#   1. ``image`` field is an ABSOLUTE path into an OpenImages cache, which
+#      preflight_lora_dataset.py rejects via path-escape. We pre-normalize it
+#      to basename via scripts/normalize_sharegpt_image_paths.py.
+#   2. Every row has the literal id "direct_qa" (the upstream wrote the
+#      template-id into the id slot). LLaVA's data loader does not use ``id``
+#      so this is harmless for training.
+#   3. New file has 4999 rows (one less than direct_5k's 5000); negligible.
 # ==============================================================================
 set -euo pipefail
 
@@ -127,11 +137,29 @@ if [[ "${ALLOW_RESUME:-0}" != "1" ]]; then
   fi
 fi
 
-# ---- Preflight: detect/convert JSONL, validate rows + image files ------------
+# ---- Step 1: normalize image paths (abs path -> basename) -------------------
+# The upstream sft_with_cot exporter writes absolute /mnt/.../openimages_cache
+# paths into the ``image`` field; LLaVA's loader and preflight expect a
+# basename relative to ``image_folder``. We rewrite to a sibling JSONL.
+echo "[launcher] normalize image paths..."
+NORMALIZE_LOG="${OUTPUT_DIR}/normalize.log"
+NORMALIZED_DATA="${OUTPUT_DIR}/data.normalized.jsonl"
+python3 "${ROOT_DIR}/scripts/normalize_sharegpt_image_paths.py" \
+  --input  "${DATA_PATH}" \
+  --output "${NORMALIZED_DATA}" \
+  --image-folder "${IMAGE_FOLDER}" 2>&1 | tee "${NORMALIZE_LOG}"
+NORMALIZED_DATA_RESOLVED="$(grep -E '^USE_DATA_PATH=' "${NORMALIZE_LOG}" | tail -n1 | sed 's/^USE_DATA_PATH=//')"
+if [[ -z "${NORMALIZED_DATA_RESOLVED}" ]]; then
+  echo "[launcher] normalize failed: no USE_DATA_PATH= line in ${NORMALIZE_LOG}" >&2
+  exit 1
+fi
+echo "[launcher] normalized data: ${NORMALIZED_DATA_RESOLVED}"
+
+# ---- Step 2: preflight (JSONL->JSON array + row/image validation) ------------
 echo "[launcher] preflight..."
 PREFLIGHT_LOG="${OUTPUT_DIR}/preflight.log"
 python3 "${ROOT_DIR}/scripts/preflight_lora_dataset.py" \
-  --data "${DATA_PATH}" \
+  --data "${NORMALIZED_DATA_RESOLVED}" \
   --images "${IMAGE_FOLDER}" 2>&1 | tee "${PREFLIGHT_LOG}"
 DATA_PATH_RESOLVED="$(grep -E '^USE_DATA_PATH=' "${PREFLIGHT_LOG}" | tail -n1 | sed 's/^USE_DATA_PATH=//')"
 if [[ -z "${DATA_PATH_RESOLVED}" ]]; then
