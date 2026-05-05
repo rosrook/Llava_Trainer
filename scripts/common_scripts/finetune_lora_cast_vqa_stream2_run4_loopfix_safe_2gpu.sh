@@ -71,9 +71,12 @@ BF16=False
 FP16=True
 
 LORA_ENABLE=True
-LORA_R=32
-LORA_ALPHA=64
-MM_PROJECTOR_LR=5e-6
+# Override these via env when chasing under/over-fit. Sane sweep around the
+# SAFE recipe (letter_text answers, ~5k MCQ): r in {16, 24, 32}, alpha = 2*r,
+# LEARNING_RATE in {2e-5, 3e-5, 5e-5}, MM_PROJECTOR_LR ~= LR / 10.
+LORA_R="${LORA_R:-32}"
+LORA_ALPHA="${LORA_ALPHA:-64}"
+MM_PROJECTOR_LR="${MM_PROJECTOR_LR:-5e-6}"
 
 # ---- Optimizer / schedule (~7k samples, 1 epoch by default) -----------------
 # Override via env, e.g. `NUM_TRAIN_EPOCHS=2 bash ...` to mirror the
@@ -87,8 +90,8 @@ PER_DEVICE_EVAL_BATCH_SIZE=4
 GRADIENT_ACCUMULATION_STEPS=2
 
 LEARNING_RATE="${LEARNING_RATE:-5e-5}"
-WEIGHT_DECAY=0.0
-WARMUP_RATIO=0.05
+WEIGHT_DECAY="${WEIGHT_DECAY:-0.0}"
+WARMUP_RATIO="${WARMUP_RATIO:-0.05}"
 LR_SCHEDULER_TYPE="cosine"
 
 # ---- Save / log --------------------------------------------------------------
@@ -182,7 +185,7 @@ echo "IMAGE_FOLDER    : ${IMAGE_FOLDER}"
 echo "OUTPUT_DIR      : ${OUTPUT_DIR}"
 echo "RUN_NAME        : ${RUN_NAME}"
 echo "PREPARE         : max_samples=${PREPARE_MAX_SAMPLES}  shuffle=${PREPARE_SHUFFLE}  seed=${SAMPLE_SEED}  image_mode=${PREPARE_IMAGE_MODE}"
-echo "LR / mm_proj_lr : ${LEARNING_RATE} / ${MM_PROJECTOR_LR}"
+echo "LR / mm_proj_lr : ${LEARNING_RATE} / ${MM_PROJECTOR_LR}  (warmup=${WARMUP_RATIO}, wd=${WEIGHT_DECAY})"
 echo "LoRA r / alpha  : ${LORA_R} / ${LORA_ALPHA}"
 echo "epochs / save   : ${NUM_TRAIN_EPOCHS} epoch(s) / save_steps=${SAVE_STEPS} / limit=${SAVE_TOTAL_LIMIT}"
 echo "BS / accum      : per_dev=${PER_DEVICE_TRAIN_BATCH_SIZE}  accum=${GRADIENT_ACCUMULATION_STEPS}  effective=$((NUM_GPUS * PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))"
