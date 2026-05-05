@@ -45,6 +45,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -65,6 +66,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--max-samples", type=int, default=0,
         help="Optional cap on number of converted rows (0 = no cap).",
+    )
+    p.add_argument(
+        "--shuffle", action="store_true",
+        help="Shuffle rows before applying --max-samples. Without this flag "
+             "the script takes the first N rows in file order; CAST_VQA "
+             "writes records in curriculum order (tier 0 -> 1 -> 2), so "
+             "head-N would bias the training set towards easy samples.",
+    )
+    p.add_argument(
+        "--seed", type=int, default=42,
+        help="RNG seed for --shuffle (default 42, matches direct_5k recipe).",
     )
     p.add_argument(
         "--keep-metadata", action="store_true",
@@ -152,7 +164,25 @@ def main() -> None:
     skip = Counter()
     taken: dict[str, Path] = {}
 
-    for idx, row in enumerate(iter_rows(src_path)):
+    if args.shuffle:
+        all_rows = list(iter_rows(src_path))
+        rng = random.Random(args.seed)
+        rng.shuffle(all_rows)
+        row_iter: Iterable[dict[str, Any]] = all_rows
+        print(
+            f"[prepare] loaded {len(all_rows)} rows; shuffled with seed={args.seed} "
+            f"(cap={args.max_samples or 'none'})"
+        )
+    else:
+        row_iter = iter_rows(src_path)
+        if args.max_samples:
+            print(
+                f"[prepare] WARNING: --max-samples without --shuffle takes the first "
+                f"{args.max_samples} rows in file order. CAST_VQA writes curriculum "
+                f"order (easy first), so consider passing --shuffle."
+            )
+
+    for idx, row in enumerate(row_iter):
         if args.max_samples and len(converted) >= args.max_samples:
             break
 
@@ -220,6 +250,9 @@ def main() -> None:
         "input": str(src_path),
         "output_dir": str(out_dir),
         "image_mode": args.image_mode,
+        "max_samples": args.max_samples or None,
+        "shuffle": args.shuffle,
+        "seed": args.seed if args.shuffle else None,
         "converted": len(converted),
         "unique_images": len({p.resolve() for p in taken.values()}),
         "skips": dict(skip),

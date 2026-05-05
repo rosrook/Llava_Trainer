@@ -50,7 +50,12 @@ OUTPUT_DIR="${OUTPUT_DIR:-/mnt/tidal-alsh01/dataset/perceptionVLM/models_zhuxuzh
 
 # ---- Conversion settings -----------------------------------------------------
 PREPARE_IMAGE_MODE="${PREPARE_IMAGE_MODE:-symlink}"   # symlink | copy
-PREPARE_MAX_SAMPLES="${PREPARE_MAX_SAMPLES:-0}"       # 0 = no cap
+PREPARE_MAX_SAMPLES="${PREPARE_MAX_SAMPLES:-0}"       # 0 = no cap, otherwise random subsample (uses SAMPLE_SEED)
+# If you pass PREPARE_MAX_SAMPLES > 0 and want HEAD order instead of random,
+# set PREPARE_SHUFFLE=0 explicitly. Default shuffles because CAST_VQA writes
+# curriculum order (easy first) and head-N would bias the training set.
+PREPARE_SHUFFLE="${PREPARE_SHUFFLE:-1}"
+SAMPLE_SEED="${SAMPLE_SEED:-42}"
 
 # ---- Model / LoRA (SAFE recipe) ---------------------------------------------
 MODEL_NAME_OR_PATH="liuhaotian/llava-v1.5-7b"
@@ -70,13 +75,18 @@ LORA_R=32
 LORA_ALPHA=64
 MM_PROJECTOR_LR=5e-6
 
-# ---- Optimizer / schedule (~7k samples, 1 epoch) ----------------------------
-NUM_TRAIN_EPOCHS=1
+# ---- Optimizer / schedule (~7k samples, 1 epoch by default) -----------------
+# Override via env, e.g. `NUM_TRAIN_EPOCHS=2 bash ...` to mirror the
+# explain_balanced recipe. Default 1 because the CAST_VQA dump uses
+# letter_text answers (short outputs) -- explain_balanced uses 2 epochs only
+# because its answer_mode=explanation needs the extra pass to escape the
+# format-learning plateau.
+NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-1}"
 PER_DEVICE_TRAIN_BATCH_SIZE=4
 PER_DEVICE_EVAL_BATCH_SIZE=4
 GRADIENT_ACCUMULATION_STEPS=2
 
-LEARNING_RATE=5e-5
+LEARNING_RATE="${LEARNING_RATE:-5e-5}"
 WEIGHT_DECAY=0.0
 WARMUP_RATIO=0.05
 LR_SCHEDULER_TYPE="cosine"
@@ -84,8 +94,8 @@ LR_SCHEDULER_TYPE="cosine"
 # ---- Save / log --------------------------------------------------------------
 EVALUATION_STRATEGY="no"
 SAVE_STRATEGY="steps"
-SAVE_STEPS=50
-SAVE_TOTAL_LIMIT=15
+SAVE_STEPS="${SAVE_STEPS:-50}"
+SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-15}"
 LOGGING_STEPS=5
 
 REPORT_TO="tensorboard"
@@ -135,10 +145,14 @@ else
     --input "${SOURCE_JSONL}"
     --output-dir "${CONVERTED_DIR}"
     --image-mode "${PREPARE_IMAGE_MODE}"
+    --seed "${SAMPLE_SEED}"
     --overwrite
   )
   if [[ "${PREPARE_MAX_SAMPLES}" -gt 0 ]]; then
     PREP_ARGS+=(--max-samples "${PREPARE_MAX_SAMPLES}")
+    if [[ "${PREPARE_SHUFFLE}" != "0" ]]; then
+      PREP_ARGS+=(--shuffle)
+    fi
   fi
   python3 "${PREPARE_ENTRY}" "${PREP_ARGS[@]}" 2>&1 | tee "${PREPARE_LOG}"
 fi
@@ -167,9 +181,10 @@ echo "DATA_PATH (use) : ${DATA_PATH_RESOLVED}"
 echo "IMAGE_FOLDER    : ${IMAGE_FOLDER}"
 echo "OUTPUT_DIR      : ${OUTPUT_DIR}"
 echo "RUN_NAME        : ${RUN_NAME}"
+echo "PREPARE         : max_samples=${PREPARE_MAX_SAMPLES}  shuffle=${PREPARE_SHUFFLE}  seed=${SAMPLE_SEED}  image_mode=${PREPARE_IMAGE_MODE}"
 echo "LR / mm_proj_lr : ${LEARNING_RATE} / ${MM_PROJECTOR_LR}"
 echo "LoRA r / alpha  : ${LORA_R} / ${LORA_ALPHA}"
-echo "epochs / save   : ${NUM_TRAIN_EPOCHS} epoch / save_steps=${SAVE_STEPS} / limit=${SAVE_TOTAL_LIMIT}"
+echo "epochs / save   : ${NUM_TRAIN_EPOCHS} epoch(s) / save_steps=${SAVE_STEPS} / limit=${SAVE_TOTAL_LIMIT}"
 echo "BS / accum      : per_dev=${PER_DEVICE_TRAIN_BATCH_SIZE}  accum=${GRADIENT_ACCUMULATION_STEPS}  effective=$((NUM_GPUS * PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS))"
 echo "precision       : bf16=${BF16} fp16=${FP16} tf32=${TF32}"
 echo "============================================================================="
